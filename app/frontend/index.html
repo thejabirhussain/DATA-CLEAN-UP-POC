@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Complyia • Data Tools</title>
+    <!-- TailwindCSS via CDN for simplicity -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      /* Shared table utilities */
+      .table-wrap { overflow: auto; }
+      th, td { white-space: nowrap; }
+      thead th { position: sticky; top: 0; background: #f8fafc; z-index: 10; }
+      tbody td.sticky-col, thead th.sticky-col { position: sticky; left: 0; background: #fff; z-index: 9; }
+      /* Diagnostics */
+      .sticky-th thead th { position: sticky; top: 0; background: #fff; z-index: 10; }
+      .sticky-col { position: sticky; left: 0; background: #fff; }
+      .scroll-wrap { overflow: auto; max-height: 60vh; }
+      .mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+      .cell-bad { background: rgba(239, 68, 68, 0.12); }
+      .cell-warn { background: rgba(245, 158, 11, 0.12); }
+      /* Prep drag styles */
+      thead th { user-select: none; }
+      thead th.draggable { cursor: move; }
+      thead th.th-drop-left { box-shadow: inset 3px 0 0 #10b981; }
+      thead th.th-drop-right { box-shadow: inset -3px 0 0 #10b981; }
+    </style>
+  </head>
+  <body class="bg-neutral-50 text-slate-800">
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

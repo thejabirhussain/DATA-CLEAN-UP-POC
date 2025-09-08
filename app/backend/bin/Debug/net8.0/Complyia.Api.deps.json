@@ -1,0 +1,23 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {
+      "Complyia.Api/1.0.0": {
+        "runtime": {
+          "Complyia.Api.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "Complyia.Api/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

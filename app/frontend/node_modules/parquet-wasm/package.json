@@ -1,0 +1,57 @@
+{
+  "name": "parquet-wasm",
+  "collaborators": [
+    "Kyle Barron <kylebarron2@gmail.com>"
+  ],
+  "description": "WebAssembly Parquet reader and writer.",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kylebarron/parquet-wasm"
+  },
+  "files": [
+    "*"
+  ],
+  "module": "esm/parquet_wasm.js",
+  "types": "esm/parquet_wasm.d.ts",
+  "sideEffects": [
+    "./parquet_wasm.js",
+    "./snippets/*"
+  ],
+  "keywords": [
+    "parquet",
+    "webassembly",
+    "arrow"
+  ],
+  "$comment": "We export ./esm/parquet_wasm.js so that code can work the same bundled and directly on the frontend",
+  "exports": {
+    "./bundler/parquet_wasm_bg.wasm": "./bundler/parquet_wasm_bg.wasm",
+    "./esm/parquet_wasm_bg.wasm": "./esm/parquet_wasm_bg.wasm",
+    "./node/parquet_wasm_bg.wasm": "./node/parquet_wasm_bg.wasm",
+    "./bundler": {
+      "types": "./bundler/parquet_wasm.d.ts",
+      "default": "./bundler/parquet_wasm.js"
+    },
+    "./esm": {
+      "types": "./esm/parquet_wasm.d.ts",
+      "default": "./esm/parquet_wasm.js"
+    },
+    "./node": {
+      "types": "./node/parquet_wasm.d.ts",
+      "default": "./node/parquet_wasm.js"
+    },
+    "./esm/parquet_wasm.js": {
+      "types": "./esm/parquet_wasm.d.ts",
+      "default": "./esm/parquet_wasm.js"
+    },
+    ".": {
+      "node": {
+        "types": "./node/parquet_wasm.d.ts",
+        "default": "./node/parquet_wasm.js"
+      },
+      "types": "./esm/parquet_wasm.d.ts",
+      "default": "./esm/parquet_wasm.js"
+    }
+  },
+  "version": "0.6.1"
+}

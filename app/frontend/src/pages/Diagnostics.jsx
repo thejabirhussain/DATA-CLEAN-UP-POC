@@ -1,5 +1,8 @@
 import React, { useEffect, useRef } from 'react'
 import * as XLSX from 'xlsx'
+import * as arrow from 'apache-arrow'
+import initWasm, { readParquet, Table as ParquetTable, writeParquet, WriterPropertiesBuilder, Compression } from 'parquet-wasm'
+import parquetWasmUrl from 'parquet-wasm/esm/parquet_wasm_bg.wasm?url'
 
 export default function Diagnostics(){
   const rootRef = useRef(null)
@@ -53,6 +56,28 @@ export default function Diagnostics(){
       return isNaN(+d) ? null : d
     }
 
+    let parquetReady = false
+    async function ensureParquetInit(){ if (parquetReady) return; await initWasm(parquetWasmUrl); parquetReady = true }
+
+    function tableToRows(arrowTable){
+      const cols = arrowTable.schema.fields.map(f => f.name)
+      const n = arrowTable.numRows
+      const rows = new Array(n)
+      const vectors = cols.map(name => arrowTable.getColumn(name))
+      for (let i=0; i<n; i++){
+        const obj = {}
+        for (let c=0; c<cols.length; c++) obj[cols[c]] = vectors[c]?.get(i) ?? null
+        rows[i] = obj
+      }
+      return { rows, cols }
+    }
+
+    function rowsToArrowTable(rows){
+      const cols = Object.keys(rows[0] || {})
+      const arrays = {}; cols.forEach(h => arrays[h] = rows.map(r => r[h]))
+      return arrow.tableFromArrays(arrays)
+    }
+
     async function parseFile(file){
       const name = file.name || ''
       const ext = name.split('.').pop().toLowerCase()
@@ -68,6 +93,13 @@ export default function Diagnostics(){
         if (Array.isArray(data)) return data.map(r => (typeof r === 'object' ? flatten(r) : { value: r }))
         else if (Array.isArray(data.data)) return data.data.map(r => (typeof r === 'object' ? flatten(r) : { value: r }))
         else return [flatten(data)]
+      } else if (ext === 'parquet'){
+        await ensureParquetInit()
+        const buf = new Uint8Array(await file.arrayBuffer())
+        const wasmTable = readParquet(buf)
+        const table = arrow.tableFromIPC(wasmTable.intoIPCStream())
+        const { rows } = tableToRows(table)
+        return rows.map(r => flatten(r))
       } else { throw new Error('Unsupported file type') }
     }
 
@@ -274,6 +306,28 @@ export default function Diagnostics(){
     })
 
     el('#btn-export-anoms').addEventListener('click', () => { if (!state.anomTableRows.length) return; download('anomalies.csv', toCSV(state.anomTableRows)) })
+    const btnExportAnomsJSON = el('#btn-export-anoms-json')
+    if (btnExportAnomsJSON) btnExportAnomsJSON.addEventListener('click', () => {
+      if (!state.anomTableRows.length) return
+      const jsonStr = JSON.stringify(state.anomTableRows, null, 2)
+      const blob = new Blob([jsonStr], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a'); a.href = url; a.download = 'anomalies.json'; document.body.appendChild(a); a.click(); setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url) },0)
+    })
+    const btnExportAnomsParquet = el('#btn-export-anoms-parquet')
+    if (btnExportAnomsParquet) btnExportAnomsParquet.addEventListener('click', async () => {
+      if (!state.anomTableRows.length) return
+      try{
+        await ensureParquetInit()
+        const table = rowsToArrowTable(state.anomTableRows)
+        const wasmTable = ParquetTable.fromIPCStream(arrow.tableToIPC(table, 'stream'))
+        const writerProps = new WriterPropertiesBuilder().setCompression(Compression.ZSTD).build()
+        const pq = writeParquet(wasmTable, writerProps)
+        const blob = new Blob([pq], { type: 'application/octet-stream' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a'); a.href=url; a.download='anomalies.parquet'; document.body.appendChild(a); a.click(); setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url) },0)
+      } catch(e){ console.error(e); alert('Failed to export Parquet: ' + e.message) }
+    })
 
     // Reconciliation uploads
     function afterLoadGL(rows){ state.glRows = rows; const cols = inferColumns(rows); populateSelectOptions(el('#gl-account'), cols); populateSelectOptions(el('#gl-amount'), cols); populateSelectOptions(el('#gl-entity'), ['(none)', ...cols]); el('#gl-selects').classList.remove('hidden'); el('#gl-rows').textContent = fmtInt.format(rows.length) }
@@ -310,6 +364,32 @@ export default function Diagnostics(){
       const rows = Array.from(table.querySelectorAll('tbody tr')).map(tr => { const obj={}; const tds=tr.querySelectorAll('td'); headers.forEach((h,i)=>obj[h]=tds[i]?.textContent ?? ''); return obj })
       download('reconciliation_variances.csv', toCSV(rows))
     })
+    const btnExportReconJSON = el('#btn-export-recon-json')
+    if (btnExportReconJSON) btnExportReconJSON.addEventListener('click', () => {
+      const wrap = el('#recon-table-wrap'); const table = wrap.querySelector('table'); if (!table) return
+      const headers = Array.from(table.querySelectorAll('thead th')).map(th => th.textContent)
+      const rows = Array.from(table.querySelectorAll('tbody tr')).map(tr => { const obj={}; const tds=tr.querySelectorAll('td'); headers.forEach((h,i)=>obj[h]=tds[i]?.textContent ?? ''); return obj })
+      const jsonStr = JSON.stringify(rows, null, 2)
+      const blob = new Blob([jsonStr], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a'); a.href = url; a.download = 'reconciliation_variances.json'; document.body.appendChild(a); a.click(); setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url) },0)
+    })
+    const btnExportReconParquet = el('#btn-export-recon-parquet')
+    if (btnExportReconParquet) btnExportReconParquet.addEventListener('click', async () => {
+      const wrap = el('#recon-table-wrap'); const table = wrap.querySelector('table'); if (!table) return
+      const headers = Array.from(table.querySelectorAll('thead th')).map(th => th.textContent)
+      const rows = Array.from(table.querySelectorAll('tbody tr')).map(tr => { const obj={}; const tds=tr.querySelectorAll('td'); headers.forEach((h,i)=>obj[h]=tds[i]?.textContent ?? ''); return obj })
+      try{
+        await ensureParquetInit()
+        const atable = rowsToArrowTable(rows)
+        const wasm = ParquetTable.fromIPCStream(arrow.tableToIPC(atable, 'stream'))
+        const props = new WriterPropertiesBuilder().setCompression(Compression.ZSTD).build()
+        const pq = writeParquet(wasm, props)
+        const blob = new Blob([pq], { type: 'application/octet-stream' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a'); a.href=url; a.download='reconciliation_variances.parquet'; document.body.appendChild(a); a.click(); setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url) },0)
+      } catch(e){ console.error(e); alert('Failed to export Parquet: ' + e.message) }
+    })
 
     return () => { /* no special cleanup */ }
   }, [])
@@ -331,11 +411,11 @@ export default function Diagnostics(){
               <div className="grid sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium mb-1">File</label>
-                  <input id="file-any" type="file" accept=".xlsx,.xls,.csv,.json" className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm" />
+                  <input id="file-any" type="file" accept=".xlsx,.xls,.csv,.json,.parquet" className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1">Or drop here</label>
-                  <div id="dropzone-any" className="rounded-xl border-2 border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">Drop a file (XLS/XLSX/CSV/JSON)</div>
+                  <div id="dropzone-any" className="rounded-xl border-2 border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">Drop a file (XLS/XLSX/CSV/JSON/Parquet)</div>
                 </div>
               </div>
 
@@ -369,6 +449,8 @@ export default function Diagnostics(){
                 <div className="mt-4">
                   <button id="btn-scan" className="rounded-xl bg-emerald-600 text-white px-4 py-2 text-sm font-medium hover:bg-emerald-700">Run Anomaly Scan</button>
                   <button id="btn-export-anoms" className="ml-2 rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-50">Export anomalies (CSV)</button>
+                  <button id="btn-export-anoms-json" className="ml-2 rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-50">Export anomalies (JSON)</button>
+                  <button id="btn-export-anoms-parquet" className="ml-2 rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-50">Export anomalies (Parquet)</button>
                 </div>
               </div>
             </div>
@@ -430,7 +512,7 @@ export default function Diagnostics(){
             <div>
               <h3 className="font-medium mb-2">GL Detail</h3>
               <div className="grid sm:grid-cols-2 gap-4">
-                <input id="file-gl" type="file" accept=".xlsx,.xls,.csv,.json" className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm" />
+                <input id="file-gl" type="file" accept=".xlsx,.xls,.csv,.json,.parquet" className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm" />
                 <div id="dropzone-gl" className="rounded-xl border-2 border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">Drop GL file</div>
               </div>
               <div id="gl-selects" className="mt-4 hidden grid sm:grid-cols-3 gap-3">
@@ -451,7 +533,7 @@ export default function Diagnostics(){
             <div>
               <h3 className="font-medium mb-2">Trial Balance (TB)</h3>
               <div className="grid sm:grid-cols-2 gap-4">
-                <input id="file-tb" type="file" accept=".xlsx,.xls,.csv,.json" className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm" />
+                <input id="file-tb" type="file" accept=".xlsx,.xls,.csv,.json,.parquet" className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm" />
                 <div id="dropzone-tb" className="rounded-xl border-2 border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">Drop TB file</div>
               </div>
               <div id="tb-selects" className="mt-4 hidden grid sm:grid-cols-3 gap-3">
@@ -479,6 +561,8 @@ export default function Diagnostics(){
             <div className="md:col-span-3 flex items-end gap-2">
               <button id="btn-recon" className="rounded-xl bg-emerald-600 text-white px-4 py-2 text-sm font-medium hover:bg-emerald-700">Run Reconciliation</button>
               <button id="btn-export-recon" className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-50">Export variances (CSV)</button>
+              <button id="btn-export-recon-json" className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-50">Export variances (JSON)</button>
+              <button id="btn-export-recon-parquet" className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-50">Export variances (Parquet)</button>
             </div>
           </div>
         </div>

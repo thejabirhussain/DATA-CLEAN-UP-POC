@@ -9,6 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "apache-arrow": "^14.0.2",
+    "parquet-wasm": "^0.6.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.23.1",

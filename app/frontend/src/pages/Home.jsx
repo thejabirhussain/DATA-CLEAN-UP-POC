@@ -1,5 +1,8 @@
 import React, { useEffect, useRef } from 'react'
 import * as XLSX from 'xlsx'
+import * as arrow from 'apache-arrow'
+import initWasm, { readParquet, Table as ParquetTable, writeParquet, WriterPropertiesBuilder, Compression } from 'parquet-wasm'
+import parquetWasmUrl from 'parquet-wasm/esm/parquet_wasm_bg.wasm?url'
 
 export default function Home(){
   const rootRef = useRef(null)
@@ -16,6 +19,7 @@ export default function Home(){
     let PIPELINE = []
     const PAGE_SIZE = 50
     let CURRENT_PAGE = 1
+    let parquetReady = false
 
     // DOM helpers (scoped to this component)
     const $ = (id) => root.querySelector('#'+id)
@@ -26,6 +30,8 @@ export default function Home(){
 
     const exportCSVBtn = $("export-csv")
     const exportXLSXBtn = $("export-xlsx")
+    const exportJSONBtn = $("export-json")
+    const exportParquetBtn = $("export-parquet")
     const saveRecipeBtn = $("save-recipe")
     const loadRecipeBtn = $("load-recipe")
     const recipeInput = $("recipe-input")
@@ -52,6 +58,32 @@ export default function Home(){
 
     const clone = (x) => JSON.parse(JSON.stringify(x))
     const toTitle = (s) => s.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.substring(1).toLowerCase())
+
+    async function ensureParquetInit(){
+      if (parquetReady) return
+      await initWasm(parquetWasmUrl)
+      parquetReady = true
+    }
+
+    function tableToRows(arrowTable){
+      const cols = arrowTable.schema.fields.map(f => f.name)
+      const n = arrowTable.numRows
+      const rows = new Array(n)
+      const vectors = cols.map(name => arrowTable.getColumn(name))
+      for (let i=0; i<n; i++){
+        const obj = {}
+        for (let c=0; c<cols.length; c++) obj[cols[c]] = vectors[c]?.get(i) ?? null
+        rows[i] = obj
+      }
+      return { rows, cols }
+    }
+
+    function rowsToArrowTable(rows, cols){
+      const arrays = {}
+      const headers = cols && cols.length ? cols : Object.keys(rows[0] || {})
+      headers.forEach(h => { arrays[h] = rows.map(r => r[h]) })
+      return arrow.tableFromArrays(arrays)
+    }
 
     function renderParams(){
       const op = tOp.value
@@ -142,6 +174,8 @@ export default function Home(){
     function toggleControls(hasData){
       exportCSVBtn.disabled = !hasData
       exportXLSXBtn.disabled = !hasData
+      if (exportJSONBtn) exportJSONBtn.disabled = !hasData
+      if (exportParquetBtn) exportParquetBtn.disabled = !hasData
       saveRecipeBtn.disabled = !hasData
       addStepBtn.disabled = !hasData
       runBtn.disabled = !hasData
@@ -152,14 +186,38 @@ export default function Home(){
       if (!files || !files[0]) return
       const f = files[0]
       fileNameEl.textContent = f.name
-      const buf = await f.arrayBuffer()
-      const wb = XLSX.read(buf, { type: 'array' })
-      const ws = wb.Sheets[wb.SheetNames[0]]
-      const json = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false })
-      const headerRow = XLSX.utils.sheet_to_json(ws, { header: 1 })[0] || []
-      COLUMNS = (headerRow.length ? headerRow : Object.keys(json[0] || {})).map(String)
-      ORIGINAL = json
-      EDITED = clone(json)
+      const name = f.name || ''
+      const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : ''
+      if (['xlsx','xls','csv'].includes(ext)){
+        const buf = await f.arrayBuffer()
+        const wb = XLSX.read(buf, { type: 'array' })
+        const ws = wb.Sheets[wb.SheetNames[0]]
+        const json = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false })
+        const headerRow = XLSX.utils.sheet_to_json(ws, { header: 1 })[0] || []
+        COLUMNS = (headerRow.length ? headerRow : Object.keys(json[0] || {})).map(String)
+        ORIGINAL = json
+        EDITED = clone(json)
+      } else if (ext === 'json'){
+        const txt = await f.text()
+        let data = JSON.parse(txt)
+        if (!Array.isArray(data)) data = Array.isArray(data?.data) ? data.data : [data]
+        const cols = new Set(); data.forEach(r => Object.keys(r||{}).forEach(k => cols.add(String(k))))
+        COLUMNS = Array.from(cols)
+        ORIGINAL = data
+        EDITED = clone(data)
+      } else if (ext === 'parquet'){
+        await ensureParquetInit()
+        const buf = new Uint8Array(await f.arrayBuffer())
+        const wasmTable = readParquet(buf)
+        const table = arrow.tableFromIPC(wasmTable.intoIPCStream())
+        const { rows, cols } = tableToRows(table)
+        COLUMNS = cols
+        ORIGINAL = rows
+        EDITED = clone(rows)
+      } else {
+        alert('Unsupported file type. Please upload CSV, XLSX, JSON, or Parquet.')
+        return
+      }
       PIPELINE = []
       renderTable()
       renderPipeline()
@@ -319,6 +377,24 @@ export default function Home(){
       const a = document.createElement('a'); a.href = url; a.download = 'cleaned.xlsx'; document.body.appendChild(a); a.click(); setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url) },0)
     })
 
+    if (exportJSONBtn) exportJSONBtn.addEventListener('click', () => {
+      const jsonStr = JSON.stringify(EDITED, null, 2)
+      downloadString(jsonStr, 'application/json', 'cleaned.json')
+    })
+
+    if (exportParquetBtn) exportParquetBtn.addEventListener('click', async () => {
+      try {
+        await ensureParquetInit()
+        const table = rowsToArrowTable(EDITED, COLUMNS)
+        const wasmTable = ParquetTable.fromIPCStream(arrow.tableToIPC(table, 'stream'))
+        const writerProps = new WriterPropertiesBuilder().setCompression(Compression.ZSTD).build()
+        const parquetUint8 = writeParquet(wasmTable, writerProps)
+        const blob = new Blob([parquetUint8], { type: 'application/octet-stream' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a'); a.href = url; a.download = 'cleaned.parquet'; document.body.appendChild(a); a.click(); setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url) },0)
+      } catch (e) { console.error(e); alert('Failed to export Parquet: ' + e.message) }
+    })
+
     saveRecipeBtn.addEventListener('click', () => { const recipe = JSON.stringify({ pipeline: PIPELINE, columns: COLUMNS }, null, 2); downloadString(recipe,'application/json','recipe.json') })
 
     loadRecipeBtn.addEventListener('click', () => recipeInput.click())
@@ -346,13 +422,15 @@ export default function Home(){
     <main ref={rootRef} className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       <section className="bg-white rounded-2xl shadow p-4 mb-6">
         <div className="flex flex-wrap items-center gap-3">
-          <input id="file-input" type="file" accept=".csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" className="hidden" />
-          <button id="pick-file" className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700">Load CSV/XLSX</button>
-          <div id="dropzone" className="flex-1 min-w-[260px] border-2 border-dashed border-slate-300 rounded-xl p-3 text-sm text-slate-600">Drag & drop file here</div>
+          <input id="file-input" type="file" accept=".csv,.xlsx,.xls,.json,.parquet,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" className="hidden" />
+          <button id="pick-file" className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700">Load Data</button>
+          <div id="dropzone" className="flex-1 min-w-[260px] border-2 border-dashed border-slate-300 rounded-xl p-3 text-sm text-slate-600">Drag & drop CSV/XLSX/JSON/Parquet here</div>
           <span id="file-name" className="text-sm text-slate-500"></span>
           <div className="ml-auto flex items-center gap-2">
             <button id="export-csv" className="px-3 py-2 rounded-lg bg-slate-100 text-slate-800 text-sm hover:bg-slate-200" disabled>Export CSV</button>
             <button id="export-xlsx" className="px-3 py-2 rounded-lg bg-slate-100 text-slate-800 text-sm hover:bg-slate-200" disabled>Export XLSX</button>
+            <button id="export-json" className="px-3 py-2 rounded-lg bg-slate-100 text-slate-800 text-sm hover:bg-slate-200" disabled>Export JSON</button>
+            <button id="export-parquet" className="px-3 py-2 rounded-lg bg-slate-100 text-slate-800 text-sm hover:bg-slate-200" disabled>Export Parquet</button>
             <button id="save-recipe" className="px-3 py-2 rounded-lg bg-slate-100 text-slate-800 text-sm hover:bg-slate-200" disabled>Save Recipe</button>
             <button id="load-recipe" className="px-3 py-2 rounded-lg bg-slate-100 text-slate-800 text-sm hover:bg-slate-200">Load Recipe</button>
             <input id="recipe-input" type="file" accept="application/json" className="hidden" />

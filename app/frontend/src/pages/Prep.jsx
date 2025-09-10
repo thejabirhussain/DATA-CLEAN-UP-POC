@@ -1,18 +1,25 @@
 import React, { useEffect, useRef } from 'react'
 import * as XLSX from 'xlsx'
+import * as arrow from 'apache-arrow'
+import initWasm, { readParquet, Table as ParquetTable, writeParquet, WriterPropertiesBuilder, Compression } from 'parquet-wasm'
+import parquetWasmUrl from 'parquet-wasm/esm/parquet_wasm_bg.wasm?url'
 
 export default function Prep(){
   const rootRef = useRef(null)
 
   useEffect(() => {
     const root = rootRef.current; if (!root) return
+    if (root.dataset.bound === '1') return
+    root.dataset.bound = '1'
     // State
     let ORIGINAL = []
     let EDITED = []
     let COLUMNS = []
+    let BASE_COLUMNS = []
     let PIPELINE = []
     const PAGE_SIZE = 50
     let CURRENT_PAGE = 1
+    let parquetReady = false
 
     // History
     let HISTORY = []
@@ -25,7 +32,7 @@ export default function Prep(){
     // DOM
     const $ = (id) => root.querySelector('#'+id)
     const fileInput = $("file-input"); const pickBtn = $("pick-file"); const dropzone = $("dropzone"); const fileNameEl = $("file-name")
-    const exportCSVBtn = $("export-csv"); const exportXLSXBtn = $("export-xlsx"); const saveRecipeBtn = $("save-recipe"); const loadRecipeBtn = $("load-recipe"); const recipeInput = $("recipe-input")
+    const exportCSVBtn = $("export-csv"); const exportXLSXBtn = $("export-xlsx"); const exportJSONBtn = $("export-json"); const exportParquetBtn = $("export-parquet"); const saveRecipeBtn = $("save-recipe"); const loadRecipeBtn = $("load-recipe"); const recipeInput = $("recipe-input")
     const tCol = $("t-col"); const tOp = $("t-op"); const tParams = $("t-params"); const addStepBtn = $("add-step"); const runBtn = $("run-pipeline"); const enablePipeline = $("enable-pipeline")
     const pipelineList = $("pipeline"); const undoBtn = $("undo"); const redoBtn = $("redo"); const historyInfo = $("history-info")
     const previewWrap = $("nl-preview-wrap"); const previewList = $("nl-preview"); const applyPreviewBtn = $("apply-preview"); const clearPreviewBtn = $("clear-preview")
@@ -137,21 +144,52 @@ export default function Prep(){
       refreshColumnSelect(); updateReadiness(); toggleControls(true)
     }
 
-    function toggleControls(hasData){ exportCSVBtn.disabled = !hasData; exportXLSXBtn.disabled = !hasData; saveRecipeBtn.disabled = !hasData; addStepBtn.disabled = !hasData; runBtn.disabled = !hasData; clearEditsBtn.disabled = !hasData }
+    function toggleControls(hasData){ exportCSVBtn.disabled = !hasData; exportXLSXBtn.disabled = !hasData; if (exportJSONBtn) exportJSONBtn.disabled = !hasData; if (exportParquetBtn) exportParquetBtn.disabled = !hasData; saveRecipeBtn.disabled = !hasData; addStepBtn.disabled = !hasData; runBtn.disabled = !hasData; clearEditsBtn.disabled = !hasData }
+
+    async function ensureParquetInit(){ if (parquetReady) return; await initWasm(parquetWasmUrl); parquetReady = true }
+
+    function tableToRows(arrowTable){ const cols = arrowTable.schema.fields.map(f => f.name); const n = arrowTable.numRows; const rows = new Array(n); const vectors = cols.map(name => arrowTable.getColumn(name)); for (let i=0;i<n;i++){ const obj={}; for (let c=0;c<cols.length;c++) obj[cols[c]] = vectors[c]?.get(i) ?? null; rows[i]=obj } return { rows, cols } }
+    function rowsToArrowTable(rows, cols){ const arrays={}; const headers = cols && cols.length ? cols : Object.keys(rows[0]||{}); headers.forEach(h => arrays[h] = rows.map(r => r[h])); return arrow.tableFromArrays(arrays) }
 
     async function handleFiles(files){
       if (!files || !files[0]) return
       const f = files[0]
       fileNameEl.textContent = f.name
-      const buf = await f.arrayBuffer()
-      const wb = XLSX.read(buf, { type: 'array' })
-      const ws = wb.Sheets[wb.SheetNames[0]]
-      const json = XLSX.utils.sheet_to_json(ws, { defval: '' , raw: false})
-      const headerRow = XLSX.utils.sheet_to_json(ws, { header: 1 })[0] || []
-      COLUMNS = (headerRow.length ? headerRow : Object.keys(json[0] || {})).map(String)
-      ORIGINAL = json; EDITED = clone(json); PIPELINE = []
+      const name = f.name || ''
+      const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : ''
+      if (["xlsx","xls","csv"].includes(ext)){
+        const buf = await f.arrayBuffer()
+        const wb = XLSX.read(buf, { type: 'array' })
+        const ws = wb.Sheets[wb.SheetNames[0]]
+        const json = XLSX.utils.sheet_to_json(ws, { defval: '' , raw: false})
+        const headerRow = XLSX.utils.sheet_to_json(ws, { header: 1 })[0] || []
+        COLUMNS = (headerRow.length ? headerRow : Object.keys(json[0] || {})).map(String)
+        ORIGINAL = json; EDITED = clone(json)
+      } else if (ext === 'json'){
+        const txt = await f.text()
+        let data = JSON.parse(txt)
+        if (!Array.isArray(data)) data = Array.isArray(data?.data) ? data.data : [data]
+        const cols = new Set(); data.forEach(r => Object.keys(r||{}).forEach(k => cols.add(String(k))))
+        COLUMNS = Array.from(cols)
+        ORIGINAL = data; EDITED = clone(data)
+      } else if (ext === 'parquet'){
+        await ensureParquetInit()
+        const buf = new Uint8Array(await f.arrayBuffer())
+        const wasmTable = readParquet(buf)
+        const table = arrow.tableFromIPC(wasmTable.intoIPCStream())
+        const { rows, cols } = tableToRows(table)
+        COLUMNS = cols
+        ORIGINAL = rows; EDITED = clone(rows)
+      } else {
+        alert('Unsupported file type. Please upload CSV, XLSX, JSON, or Parquet.')
+        return
+      }
+      BASE_COLUMNS = clone(COLUMNS)
+      PIPELINE = []
       HISTORY = []; FUTURE = []; updateHistoryInfo()
-      renderTable(); renderPipeline()
+      applyPipeline();
+      renderTable();
+      renderPipeline()
     }
 
     pickBtn.addEventListener('click', () => fileInput.click())
@@ -169,7 +207,8 @@ export default function Prep(){
 
     // Pipeline
     tOp.addEventListener('change', renderParams)
-    runBtn.addEventListener('click', () => { if (!enablePipeline.checked) return; applyPipeline(); renderTable() })
+    if (enablePipeline) enablePipeline.addEventListener('change', () => { applyPipeline(); renderTable() })
+    runBtn.addEventListener('click', () => { applyPipeline(); renderTable() })
     addStepBtn.addEventListener('click', () => { if (!COLUMNS.length) return; pushHistory(); const step = { op: tOp.value, col: tCol.value, params: collectParams(), enabled: true }; addStep(step) })
 
     if (undoBtn) undoBtn.addEventListener('click', undo)
@@ -185,15 +224,31 @@ export default function Prep(){
         li.className = 'border border-slate-200 rounded-xl p-2 flex items-start gap-2'
         const label = document.createElement('div'); label.className = 'text-xs flex-1'; label.textContent = `${idx+1}. ${step.op} on ${step.col}`
         const btns = document.createElement('div'); btns.className = 'flex items-center gap-2'
-        const onoff = document.createElement('input'); onoff.type = 'checkbox'; onoff.checked = step.enabled !== false; onoff.addEventListener('change', () => { step.enabled = onoff.checked })
-        const del = document.createElement('button'); del.textContent = 'Delete'; del.className = 'px-2 py-1 rounded bg-slate-100 text-xs'; del.addEventListener('click', () => { pushHistory(); PIPELINE.splice(idx,1); renderPipeline() })
+        const onoff = document.createElement('input'); onoff.type = 'checkbox'; onoff.checked = step.enabled !== false; onoff.addEventListener('change', () => { pushHistory(); step.enabled = onoff.checked; applyPipeline(); renderTable(); renderPipeline() })
+        const del = document.createElement('button'); del.textContent = 'Delete'; del.className = 'px-2 py-1 rounded bg-slate-100 text-xs'; del.addEventListener('click', () => { pushHistory(); PIPELINE.splice(idx,1); applyPipeline(); renderTable(); renderPipeline() })
         btns.appendChild(onoff); btns.appendChild(del); li.appendChild(label); li.appendChild(btns); pipelineList.appendChild(li)
       })
     }
 
+    // Ensure new steps apply immediately and UI reflects the change
+    function addStep(step){
+      if (!COLUMNS.length) return
+      PIPELINE.push(step)
+      renderPipeline()
+      applyPipeline()
+      renderTable()
+    }
+
     function collectParams(){ const params = {}; ['p-find','p-repl','p-regex','p-fill','p-delim','p-base','p-max','p-reg','p-newname','p-expr','p-cols','p-opr','p-const','p-col2'].forEach(id => { const el = $(id); if (el) params[id] = el.value }); return params }
 
-    function applyPipeline(){ EDITED = clone(ORIGINAL); const enabledSteps = PIPELINE.filter(s => s.enabled !== false); enabledSteps.forEach(step => { EDITED = applyStep(EDITED, step) }) }
+    // Apply all enabled steps in order, resetting from ORIGINAL each time
+    function applyPipeline(){
+      EDITED = clone(ORIGINAL)
+      // Reset columns to baseline before re-applying steps to avoid duplications
+      COLUMNS = clone(BASE_COLUMNS)
+      const enabledSteps = PIPELINE.filter(s => s.enabled !== false)
+      enabledSteps.forEach(step => { EDITED = applyStep(EDITED, step) })
+    }
 
     function safeNum(v){ const n = Number(String(v).replace(/[, ]+/g,'')); return Number.isFinite(n) ? n : NaN }
     function doMath(a,b,opr){ switch(opr){ case '+': return a+b; case '-': return a-b; case '*': return a*b; case '/': return b===0? '': a/b; default: return a } }
@@ -282,17 +337,17 @@ export default function Prep(){
     if (nlRun) nlRun.addEventListener('click', nlApply)
     if (nlInput) nlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') nlApply() })
 
-    function renderPipeline(){ pipelineList.innerHTML=''; PIPELINE.forEach((step, idx) => { const li = document.createElement('li'); li.className = 'border border-slate-200 rounded-xl p-2 flex items-start gap-2'; const label = document.createElement('div'); label.className = 'text-xs flex-1'; label.textContent = `${idx+1}. ${step.op} on ${step.col}`; const btns = document.createElement('div'); btns.className = 'flex items-center gap-2'; const onoff = document.createElement('input'); onoff.type='checkbox'; onoff.checked = step.enabled !== false; onoff.addEventListener('change', () => { step.enabled = onoff.checked }); const del = document.createElement('button'); del.textContent='Delete'; del.className='px-2 py-1 rounded bg-slate-100 text-xs'; del.addEventListener('click', () => { pushHistory(); PIPELINE.splice(idx,1); renderPipeline() }); btns.appendChild(onoff); btns.appendChild(del); li.appendChild(label); li.appendChild(btns); pipelineList.appendChild(li) }) }
+    
 
     function downloadString(str, type, filename){ const blob = new Blob([str], { type }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url) },0) }
 
     exportCSVBtn.addEventListener('click', () => { const ws = XLSX.utils.json_to_sheet(EDITED, { header: COLUMNS }); const csv = XLSX.utils.sheet_to_csv(ws); downloadString(csv, 'text/csv;charset=utf-8;', 'cleaned.csv') })
     exportXLSXBtn.addEventListener('click', () => { const ws = XLSX.utils.json_to_sheet(EDITED, { header: COLUMNS }); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Cleaned'); const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }); const blob = new Blob([out], { type: 'application/octet-stream' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'cleaned.xlsx'; document.body.appendChild(a); a.click(); setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url) },0) })
+    if (exportJSONBtn) exportJSONBtn.addEventListener('click', () => { const jsonStr = JSON.stringify(EDITED, null, 2); const blobType = 'application/json'; const url = URL.createObjectURL(new Blob([jsonStr], { type: blobType })); const a = document.createElement('a'); a.href = url; a.download = 'cleaned.json'; document.body.appendChild(a); a.click(); setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url) },0) })
+    if (exportParquetBtn) exportParquetBtn.addEventListener('click', async () => { try { await ensureParquetInit(); const table = rowsToArrowTable(EDITED, COLUMNS); const wasmTable = ParquetTable.fromIPCStream(arrow.tableToIPC(table, 'stream')); const writerProps = new WriterPropertiesBuilder().setCompression(Compression.ZSTD).build(); const pq = writeParquet(wasmTable, writerProps); const blob = new Blob([pq], { type: 'application/octet-stream' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'cleaned.parquet'; document.body.appendChild(a); a.click(); setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url) },0) } catch (e){ console.error(e); alert('Failed to export Parquet: ' + e.message) } })
     saveRecipeBtn.addEventListener('click', () => { const recipe = JSON.stringify({ pipeline: PIPELINE, columns: COLUMNS }, null, 2); downloadString(recipe,'application/json','recipe.json') })
     loadRecipeBtn.addEventListener('click', () => recipeInput.click())
-    recipeInput.addEventListener('change', async (e) => { const f = e.target.files?.[0]; if (!f) return; const txt = await f.text(); const data = JSON.parse(txt); if (Array.isArray(data.columns)) COLUMNS = data.columns; if (Array.isArray(data.pipeline)) PIPELINE = data.pipeline; HISTORY = []; FUTURE = []; updateHistoryInfo(); renderPipeline(); renderTable() })
-
-    function applyPipeline(){ EDITED = clone(ORIGINAL); const enabledSteps = PIPELINE.filter(s => s.enabled !== false); enabledSteps.forEach(step => { EDITED = applyStep(EDITED, step) }) }
+    recipeInput.addEventListener('change', async (e) => { const f = e.target.files?.[0]; if (!f) return; const txt = await f.text(); const data = JSON.parse(txt); if (Array.isArray(data.columns)) { COLUMNS = data.columns; BASE_COLUMNS = clone(COLUMNS) } if (Array.isArray(data.pipeline)) PIPELINE = data.pipeline; HISTORY = []; FUTURE = []; updateHistoryInfo(); applyPipeline(); renderTable(); renderPipeline() })
 
     renderParams()
 
@@ -303,13 +358,15 @@ export default function Prep(){
     <main ref={rootRef} className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       <section className="bg-white rounded-2xl shadow p-4 mb-6">
         <div className="flex flex-wrap items-center gap-3">
-          <input id="file-input" type="file" accept=".csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" className="hidden" />
-          <button id="pick-file" className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700">Load CSV/XLSX</button>
-          <div id="dropzone" className="flex-1 min-w-[260px] border-2 border-dashed border-slate-300 rounded-xl p-3 text-sm text-slate-600">Drag & drop file here</div>
+          <input id="file-input" type="file" accept=".csv,.xlsx,.xls,.json,.parquet,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" className="hidden" />
+          <button id="pick-file" className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700">Load Data</button>
+          <div id="dropzone" className="flex-1 min-w-[260px] border-2 border-dashed border-slate-300 rounded-xl p-3 text-sm text-slate-600">Drag & drop CSV/XLSX/JSON/Parquet here</div>
           <span id="file-name" className="text-sm text-slate-500"></span>
           <div className="ml-auto flex items-center gap-2">
             <button id="export-csv" className="px-3 py-2 rounded-lg bg-slate-100 text-slate-800 text-sm hover:bg-slate-200" disabled>Export CSV</button>
             <button id="export-xlsx" className="px-3 py-2 rounded-lg bg-slate-100 text-slate-800 text-sm hover:bg-slate-200" disabled>Export XLSX</button>
+            <button id="export-json" className="px-3 py-2 rounded-lg bg-slate-100 text-slate-800 text-sm hover:bg-slate-200" disabled>Export JSON</button>
+            <button id="export-parquet" className="px-3 py-2 rounded-lg bg-slate-100 text-slate-800 text-sm hover:bg-slate-200" disabled>Export Parquet</button>
             <button id="save-recipe" className="px-3 py-2 rounded-lg bg-slate-100 text-slate-800 text-sm hover:bg-slate-200" disabled>Save Recipe</button>
             <button id="load-recipe" className="px-3 py-2 rounded-lg bg-slate-100 text-slate-800 text-sm hover:bg-slate-200">Load Recipe</button>
             <input id="recipe-input" type="file" accept="application/json" className="hidden" />
@@ -319,12 +376,12 @@ export default function Prep(){
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         <section className="lg:col-span-1 space-y-6">
-          <div className="bg-white rounded-2xl shadow p-4">
+          <div className="bg-white rounded-2xl shadow p-4 relative overflow-hidden">
             <h2 className="text-base font-semibold mb-3">Ask in English (beta)</h2>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <input id="nl-input" className="flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm" placeholder='e.g., remove "column a"; merge "d" and "e" with "-" into "acct_path"; find values that have "?"' />
               <button id="nl-run" className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-sm hover:bg-emerald-700">Apply</button>
-              <select id="nl-mode" className="rounded-xl border border-slate-300 px-2 py-2 text-sm">
+              <select id="nl-mode" className="rounded-xl border border-slate-300 px-2 py-2 text-sm max-w-[150px]">
                 <option value="local">Local parser</option>
                 <option value="ai">AI</option>
               </select>

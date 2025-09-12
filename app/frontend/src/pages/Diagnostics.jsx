@@ -105,6 +105,32 @@ export default function Diagnostics(){
 
     function inferColumns(rows){ const cols = new Set(); for (const r of rows) for (const k of Object.keys(r)) cols.add(k); return Array.from(cols) }
 
+    // Infer disjoint column categories to avoid duplicate appearance across selects
+    function inferColumnCategories(rows, cols){
+      const stats = {}
+      for (const c of cols){ stats[c] = { total: 0, num: 0, date: 0 } }
+      for (const r of rows){
+        for (const c of cols){
+          const v = r[c]
+          if (v === null || v === undefined || v === '') continue
+          stats[c].total++
+          if (validNumber(v) !== null) stats[c].num++
+          if (parseDateLoose(v)) stats[c].date++
+        }
+      }
+      const dateCols = []
+      const numCols = []
+      const keyCols = []
+      const used = new Set()
+      // Classify dates first (>=60% look like dates)
+      for (const c of cols){ const s = stats[c]; const frac = s.total ? (s.date / s.total) : 0; if (frac >= 0.6){ dateCols.push(c); used.add(c) } }
+      // Then numbers among remaining (>=60% numbers)
+      for (const c of cols){ if (used.has(c)) continue; const s = stats[c]; const frac = s.total ? (s.num / s.total) : 0; if (frac >= 0.6){ numCols.push(c); used.add(c) } }
+      // Remaining are treated as key/categorical columns
+      for (const c of cols){ if (!used.has(c)) keyCols.push(c) }
+      return { keyCols, numCols, dateCols }
+    }
+
     const state = { anyRows: [], anyCols: [], anomalies: null, anomTableRows: [], glRows: [], tbRows: [] }
 
     function populateSelectOptions(select, options){ select.innerHTML=''; for (const c of options){ const opt=document.createElement('option'); opt.value=c; opt.textContent=c; select.appendChild(opt) } }
@@ -115,6 +141,9 @@ export default function Diagnostics(){
       const pushIssue = (idx, col, type, detail) => { if (!issuesByRow.has(idx)) issuesByRow.set(idx, []); issuesByRow.get(idx).push({ col, type, detail }) }
 
       let missingCells = 0, mismatches = 0, badDates = 0, suspCount = 0
+
+      // Track per-column missing counts to detect mostly-empty columns
+      const missingByCol = new Map(); for (const c of cols) missingByCol.set(c, 0)
 
       const numStats = {}
       for (const col of numCols){
@@ -139,7 +168,7 @@ export default function Diagnostics(){
         const r = rows[i]
         for (const col of cols){
           const v = r[col]
-          if (v === null || v === undefined || v === '') { missingCells++; continue }
+          if (v === null || v === undefined || v === '') { missingCells++; missingByCol.set(col, missingByCol.get(col)+1); continue }
           if (chkSusp && typeof v === 'string' && suspiciousRe.test(v)) { suspCount++; pushIssue(i, col, 'suspicious', String(v)) }
         }
         for (const col of numCols){
@@ -157,6 +186,14 @@ export default function Diagnostics(){
         }
       }
 
+      // Compute mostly-empty columns (>=80% empty)
+      const mostlyEmpty = []
+      for (const col of cols){
+        const miss = missingByCol.get(col) || 0
+        const pct = N ? miss / N : 0
+        if (pct >= 0.8) mostlyEmpty.push({ column: col, pctEmpty: pct })
+      }
+
       const anomRows = []
       issuesByRow.forEach((reasons, idx) => {
         const base = { _row: idx + 1 }
@@ -165,7 +202,7 @@ export default function Diagnostics(){
         anomRows.push(base)
       })
       const outlierCount = Array.from(issuesByRow.values()).flat().filter(x => x.type === 'outlier').length
-      return { issuesByRow, exportRows: anomRows, counts: { rows: N, cols: C, missing: missingCells, mismatch: mismatches, outliers: outlierCount, dup: dupCount, susp: suspCount, badDates } }
+      return { issuesByRow, exportRows: anomRows, mostlyEmpty, counts: { rows: N, cols: C, missing: missingCells, mismatch: mismatches, outliers: outlierCount, dup: dupCount, susp: suspCount, badDates, mostlyEmpty: mostlyEmpty.length } }
     }
 
     function renderAnomalyTable(rows, cols, issuesByRow){
@@ -258,27 +295,32 @@ export default function Diagnostics(){
       const rows = await parseFile(f)
       state.anyRows = rows
       state.anyCols = inferColumns(rows)
-      populateSelectOptions(el('#keys-select'), state.anyCols)
-      populateSelectOptions(el('#nums-select'), state.anyCols)
-      populateSelectOptions(el('#dates-select'), state.anyCols)
+      const cats = inferColumnCategories(rows, state.anyCols)
+      populateSelectOptions(el('#keys-select'), cats.keyCols)
+      populateSelectOptions(el('#nums-select'), cats.numCols)
+      populateSelectOptions(el('#dates-select'), cats.dateCols)
       el('#anomaly-setup').classList.remove('hidden')
       el('#sum-rows').textContent = fmtInt.format(rows.length)
       el('#sum-cols').textContent = fmtInt.format(state.anyCols.length)
-      ['#sum-missing','#sum-mismatch','#sum-outliers','#sum-dup','#sum-susp','#sum-bad-dates'].forEach(id => el(id).textContent = '—')
+      ['#sum-missing','#sum-mismatch','#sum-outliers','#sum-dup','#sum-susp','#sum-bad-dates','#sum-mostly-empty'].forEach(id => el(id).textContent = '—')
       el('#anomaly-table-card').classList.add('hidden')
+      const emptyList = el('#mostly-empty-list'); if (emptyList) emptyList.innerHTML = ''
+      const emptyCard = el('#mostly-empty-card'); if (emptyCard) emptyCard.classList.add('hidden')
     })
     enableDropzone(el('#dropzone-any'), async (f) => {
       const rows = await parseFile(f)
       state.anyRows = rows
       state.anyCols = inferColumns(rows)
-      populateSelectOptions(el('#keys-select'), state.anyCols)
-      populateSelectOptions(el('#nums-select'), state.anyCols)
-      populateSelectOptions(el('#dates-select'), state.anyCols)
+      const cats = inferColumnCategories(rows, state.anyCols)
+      populateSelectOptions(el('#keys-select'), cats.keyCols)
+      populateSelectOptions(el('#nums-select'), cats.numCols)
+      populateSelectOptions(el('#dates-select'), cats.dateCols)
       el('#anomaly-setup').classList.remove('hidden')
       el('#sum-rows').textContent = fmtInt.format(rows.length)
       el('#sum-cols').textContent = fmtInt.format(state.anyCols.length)
-      ['#sum-missing','#sum-mismatch','#sum-outliers','#sum-dup','#sum-susp','#sum-bad-dates'].forEach(id => el(id).textContent = '—')
+      ['#sum-missing','#sum-mismatch','#sum-outliers','#sum-dup','#sum-susp','#sum-bad-dates','#sum-mostly-empty'].forEach(id => el(id).textContent = '—')
       el('#anomaly-table-card').classList.add('hidden')
+      const emptyList = el('#mostly-empty-list'); if (emptyList) emptyList.innerHTML = ''
     })
 
     el('#btn-scan').addEventListener('click', () => {
@@ -300,6 +342,20 @@ export default function Diagnostics(){
       el('#sum-dup').textContent = fmtInt.format(res.counts.dup)
       el('#sum-susp').textContent = fmtInt.format(res.counts.susp)
       el('#sum-bad-dates').textContent = fmtInt.format(res.counts.badDates)
+      const sumEmpty = el('#sum-mostly-empty'); if (sumEmpty) sumEmpty.textContent = fmtInt.format(res.counts.mostlyEmpty)
+      // Render mostly-empty columns list
+      const emptyList = el('#mostly-empty-list')
+      if (emptyList){
+        if (res.mostlyEmpty.length){
+          emptyList.innerHTML = res.mostlyEmpty
+            .sort((a,b)=> b.pctEmpty - a.pctEmpty)
+            .map(x => `<li class=\"py-0.5\"><span class=\"font-medium\">${x.column}</span> — ${fmt2.format(x.pctEmpty*100)}%</li>`)
+            .join('')
+        } else {
+          emptyList.innerHTML = '<li class="text-slate-500">None</li>'
+        }
+      }
+      const emptyCard = el('#mostly-empty-card'); if (emptyCard) emptyCard.classList.remove('hidden')
       el('#anomaly-count').textContent = `${fmtInt.format(state.anomTableRows.length)} rows with issues`
       renderAnomalyTable(state.anomTableRows, state.anyCols, res.issuesByRow)
       el('#anomaly-table-card').classList.remove('hidden')
@@ -491,9 +547,21 @@ export default function Diagnostics(){
                   <dt className="text-slate-500">Bad dates</dt>
                   <dd id="sum-bad-dates" className="text-lg font-semibold">—</dd>
                 </div>
+                <div className="p-3 rounded-xl bg-slate-50">
+                  <dt className="text-slate-500">Mostly-empty columns (≥80%)</dt>
+                  <dd id="sum-mostly-empty" className="text-lg font-semibold">—</dd>
+                </div>
               </dl>
             </div>
           </div>
+        </div>
+
+        {/* Mostly-empty columns list */}
+        <div id="mostly-empty-card" className="bg-white rounded-2xl shadow p-5 hidden">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold">Mostly-empty columns (≥80% empty)</h3>
+          </div>
+          <ul id="mostly-empty-list" className="text-sm list-disc pl-6"></ul>
         </div>
 
         <div id="anomaly-table-card" className="bg-white rounded-2xl shadow p-5 hidden">

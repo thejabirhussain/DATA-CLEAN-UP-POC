@@ -10,11 +10,15 @@ export default function Diagnostics(){
   useEffect(() => {
     const root = rootRef.current
     if (!root) return
+    // Prevent double-binding in React 18 Strict Mode (dev) where effects run twice
+    if (root.dataset.bound === '1') return
+    root.dataset.bound = '1'
 
     // Utilities
     const fmtInt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 })
     const fmt2 = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     const el = sel => root.querySelector(sel)
+    const setTextAll = (sel, text) => { root.querySelectorAll(sel).forEach(n => { n.textContent = text }) }
 
     function toCSV(rows){
       if (!rows || !rows.length) return ''
@@ -46,14 +50,30 @@ export default function Diagnostics(){
 
     function validNumber(x){
       if (x === null || x === undefined || x === '') return null
-      const n = Number(String(x).toString().replace(/[^\d.-]/g, ''))
+      const s = String(x)
+      // Remove everything except digits, decimal point, and minus sign
+      const cleaned = s.replace(/[^\d.-]/g, '')
+      // If nothing meaningful remains (no digits), treat as non-number
+      if (!/[0-9]/.test(cleaned)) return null
+      // Prevent strings like '-' or '.' or '-.' being treated as numbers
+      if (/^[-.]+$/.test(cleaned)) return null
+      const n = Number(cleaned)
       return Number.isFinite(n) ? n : null
     }
 
     function parseDateLoose(x){
       if (x === null || x === undefined || x === '') return null
-      const d = new Date(x)
-      return isNaN(+d) ? null : d
+      // Only treat string-like values with common date separators as dates
+      if (typeof x !== 'string') return null
+      const s = x.trim()
+      // Quick precheck: contains '-', '/', or 'T' (ISO). Avoid free-form numerics.
+      if (!/[\-\/T]/.test(s)) return null
+      const d = new Date(s)
+      if (isNaN(+d)) return null
+      const y = d.getFullYear()
+      // Reasonable year bounds for business data
+      if (y < 1900 || y > 2100) return null
+      return d
     }
 
     let parquetReady = false
@@ -124,8 +144,8 @@ export default function Diagnostics(){
       const used = new Set()
       // Classify dates first (>=60% look like dates)
       for (const c of cols){ const s = stats[c]; const frac = s.total ? (s.date / s.total) : 0; if (frac >= 0.6){ dateCols.push(c); used.add(c) } }
-      // Then numbers among remaining (>=60% numbers)
-      for (const c of cols){ if (used.has(c)) continue; const s = stats[c]; const frac = s.total ? (s.num / s.total) : 0; if (frac >= 0.6){ numCols.push(c); used.add(c) } }
+      // Then numbers among remaining (>=75% numbers) to reduce false positives
+      for (const c of cols){ if (used.has(c)) continue; const s = stats[c]; const frac = s.total ? (s.num / s.total) : 0; if (frac >= 0.75){ numCols.push(c); used.add(c) } }
       // Remaining are treated as key/categorical columns
       for (const c of cols){ if (!used.has(c)) keyCols.push(c) }
       return { keyCols, numCols, dateCols }
@@ -283,10 +303,89 @@ export default function Diagnostics(){
     el('#tab-anomaly').addEventListener('click', () => setTab('anomaly'))
     el('#tab-recon').addEventListener('click', () => setTab('recon'))
 
+    // Initialize accordion dropdown behavior
+    setupAccordions()
+
     function enableDropzone(zone, onFile){
       zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('ring-2','ring-emerald-300') })
       zone.addEventListener('dragleave', () => { zone.classList.remove('ring-2','ring-emerald-300') })
       zone.addEventListener('drop', async e => { e.preventDefault(); zone.classList.remove('ring-2','ring-emerald-300'); const f = e.dataTransfer.files?.[0]; if (f) onFile(f) })
+    }
+
+    // Simple accordion toggles for anomaly cards (event delegation)
+    function setupAccordions(){
+      root.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-acc-toggle]')
+        if (!btn || !root.contains(btn)) return
+        e.preventDefault()
+        const target = btn.getAttribute('data-acc-toggle')
+        if (!target) return
+        const panel = el(target)
+        if (!panel) return
+        const isHidden = panel.classList.toggle('hidden')
+        // aria-expanded for a11y
+        btn.setAttribute('aria-expanded', String(!isHidden))
+        btn.querySelector('.chev')?.classList.toggle('rotate-180')
+      })
+    }
+
+    // Render segregated anomaly tables with highlighted cells by type
+    function renderAnomalyBuckets(res){
+      const byRow = res.issuesByRow
+      const cols = state.anyCols
+      const rows = state.anyRows
+
+      function groupByType(type){
+        const map = new Map()
+        byRow.forEach((arr, idx) => {
+          arr.forEach(it => {
+            if (it.type !== type) return
+            if (!map.has(idx)) map.set(idx, { cols: new Map() })
+            // track per-col details (could be multiple)
+            const colMap = map.get(idx).cols
+            if (!colMap.has(it.col)) colMap.set(it.col, [])
+            colMap.get(it.col).push(it.detail || '')
+          })
+        })
+        return map
+      }
+
+      function renderTable(containerId, type){
+        const cont = el(containerId)
+        if (!cont) return
+        const grouped = groupByType(type)
+        if (!grouped.size){ cont.innerHTML = '<div class="text-slate-500 text-sm">None</div>'; return }
+        const thead = `<thead><tr><th class=\"px-3 py-2 text-left text-xs font-medium text-slate-500 border-b\">#</th>${cols.map(h => `<th class=\"px-3 py-2 text-left text-xs font-medium text-slate-500 border-b\">${h}</th>`).join('')}</tr></thead>`
+        const tbody = Array.from(grouped.keys()).sort((a,b)=>a-b).map(idx => {
+          const r = rows[idx] || {}
+          const colMap = grouped.get(idx).cols
+          const tds = cols.map(c => {
+            const v = r[c]
+            const has = colMap.has(c)
+            const cls = type === 'suspicious' ? (has ? 'cell-warn' : '') : (has ? 'cell-bad' : '')
+            const title = has ? `${type}${(colMap.get(c) || []).filter(Boolean).length ? (' ('+colMap.get(c).filter(Boolean).join(', ')+')') : ''}` : ''
+            return `<td class=\"px-3 py-1 border-b ${cls}\" title=\"${title}\">${v ?? ''}</td>`
+          }).join('')
+          return `<tr><td class=\"px-3 py-1 border-b text-slate-500\">${idx+1}</td>${tds}</tr>`
+        }).join('')
+        cont.innerHTML = `<div class=\"scroll-wrap\"><table class=\"w-full text-sm\">${thead}<tbody>${tbody}</tbody></table></div>`
+        return grouped.size
+      }
+
+      const dupN = renderTable('#dup-list', 'duplicate') || 0
+      const suspN = renderTable('#susp-list', 'suspicious') || 0
+      const numN = renderTable('#num-mismatch-list', 'type') || 0
+      const outN = renderTable('#outlier-list', 'outlier') || 0
+      const dateN = renderTable('#date-list', 'date') || 0
+
+      const setCnt = (id, n) => { const sp = el(id); if (sp) sp.textContent = String(n) }
+      setCnt('#cnt-dup', dupN)
+      setCnt('#cnt-susp', suspN)
+      setCnt('#cnt-num-mismatch', numN)
+      setCnt('#cnt-outliers', outN)
+      setCnt('#cnt-date', dateN)
+      const sumEmpty = el('#cnt-mostly-empty'); if (sumEmpty) sumEmpty.textContent = String(res.mostlyEmpty.length)
+      const sumAll = el('#cnt-summary'); if (sumAll) sumAll.textContent = String(res.exportRows.length)
     }
 
     // Anomaly uploads
@@ -300,12 +399,15 @@ export default function Diagnostics(){
       populateSelectOptions(el('#nums-select'), cats.numCols)
       populateSelectOptions(el('#dates-select'), cats.dateCols)
       el('#anomaly-setup').classList.remove('hidden')
-      el('#sum-rows').textContent = fmtInt.format(rows.length)
-      el('#sum-cols').textContent = fmtInt.format(state.anyCols.length)
-      ['#sum-missing','#sum-mismatch','#sum-outliers','#sum-dup','#sum-susp','#sum-bad-dates','#sum-mostly-empty'].forEach(id => el(id).textContent = '—')
+      setTextAll('#sum-rows', fmtInt.format(rows.length))
+      setTextAll('#sum-cols', fmtInt.format(state.anyCols.length))
+      ;['#sum-missing','#sum-mismatch','#sum-outliers','#sum-dup','#sum-susp','#sum-bad-dates','#sum-mostly-empty'].forEach(id => setTextAll(id, '—'))
       el('#anomaly-table-card').classList.add('hidden')
       const emptyList = el('#mostly-empty-list'); if (emptyList) emptyList.innerHTML = ''
       const emptyCard = el('#mostly-empty-card'); if (emptyCard) emptyCard.classList.add('hidden')
+      // Clear segregated cards
+      ['#dup-list','#susp-list','#num-mismatch-list','#outlier-list','#date-list'].forEach(id => { const ul = el(id); if (ul) ul.innerHTML = '' })
+      ['#cnt-dup','#cnt-susp','#cnt-num-mismatch','#cnt-outliers','#cnt-date','#cnt-mostly-empty','#cnt-summary'].forEach(id => { const sp = el(id); if (sp) sp.textContent = '0' })
     })
     enableDropzone(el('#dropzone-any'), async (f) => {
       const rows = await parseFile(f)
@@ -321,6 +423,10 @@ export default function Diagnostics(){
       ['#sum-missing','#sum-mismatch','#sum-outliers','#sum-dup','#sum-susp','#sum-bad-dates','#sum-mostly-empty'].forEach(id => el(id).textContent = '—')
       el('#anomaly-table-card').classList.add('hidden')
       const emptyList = el('#mostly-empty-list'); if (emptyList) emptyList.innerHTML = ''
+      const emptyCard = el('#mostly-empty-card'); if (emptyCard) emptyCard.classList.add('hidden')
+      // Clear segregated cards and reset counters
+      ['#dup-list','#susp-list','#num-mismatch-list','#outlier-list','#date-list'].forEach(id => { const ul = el(id); if (ul) ul.innerHTML = '' })
+      ['#cnt-dup','#cnt-susp','#cnt-num-mismatch','#cnt-outliers','#cnt-date','#cnt-mostly-empty','#cnt-summary'].forEach(id => { const sp = el(id); if (sp) sp.textContent = '0' })
     })
 
     el('#btn-scan').addEventListener('click', () => {
@@ -334,15 +440,15 @@ export default function Diagnostics(){
       const res = computeAnomalies(state.anyRows, state.anyCols, { keyCols, numCols, dateCols, chkOut, chkDup, chkSusp })
       state.anomalies = res
       state.anomTableRows = res.exportRows
-      el('#sum-rows').textContent = fmtInt.format(res.counts.rows)
-      el('#sum-cols').textContent = fmtInt.format(res.counts.cols)
-      el('#sum-missing').textContent = fmtInt.format(res.counts.missing)
-      el('#sum-mismatch').textContent = fmtInt.format(res.counts.mismatch)
-      el('#sum-outliers').textContent = fmtInt.format(res.counts.outliers)
-      el('#sum-dup').textContent = fmtInt.format(res.counts.dup)
-      el('#sum-susp').textContent = fmtInt.format(res.counts.susp)
-      el('#sum-bad-dates').textContent = fmtInt.format(res.counts.badDates)
-      const sumEmpty = el('#sum-mostly-empty'); if (sumEmpty) sumEmpty.textContent = fmtInt.format(res.counts.mostlyEmpty)
+      setTextAll('#sum-rows', fmtInt.format(res.counts.rows))
+      setTextAll('#sum-cols', fmtInt.format(res.counts.cols))
+      setTextAll('#sum-missing', fmtInt.format(res.counts.missing))
+      setTextAll('#sum-mismatch', fmtInt.format(res.counts.mismatch))
+      setTextAll('#sum-outliers', fmtInt.format(res.counts.outliers))
+      setTextAll('#sum-dup', fmtInt.format(res.counts.dup))
+      setTextAll('#sum-susp', fmtInt.format(res.counts.susp))
+      setTextAll('#sum-bad-dates', fmtInt.format(res.counts.badDates))
+      setTextAll('#sum-mostly-empty', fmtInt.format(res.counts.mostlyEmpty))
       // Render mostly-empty columns list
       const emptyList = el('#mostly-empty-list')
       if (emptyList){
@@ -359,6 +465,8 @@ export default function Diagnostics(){
       el('#anomaly-count').textContent = `${fmtInt.format(state.anomTableRows.length)} rows with issues`
       renderAnomalyTable(state.anomTableRows, state.anyCols, res.issuesByRow)
       el('#anomaly-table-card').classList.remove('hidden')
+      // Populate segregated dropdown cards
+      renderAnomalyBuckets(res)
     })
 
     el('#btn-export-anoms').addEventListener('click', () => { if (!state.anomTableRows.length) return; download('anomalies.csv', toCSV(state.anomTableRows)) })
@@ -556,12 +664,87 @@ export default function Diagnostics(){
           </div>
         </div>
 
-        {/* Mostly-empty columns list */}
-        <div id="mostly-empty-card" className="bg-white rounded-2xl shadow p-5 hidden">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold">Mostly-empty columns (≥80% empty)</h3>
+        {/* Accordion: Summary */}
+        <div id="summary-card" className="bg-white rounded-2xl shadow">
+          <button className="w-full flex items-center justify-between px-5 py-3" data-acc-toggle="#summary-panel">
+            <h3 className="font-semibold">Summary</h3>
+            <div className="text-sm text-slate-500">Total anomalies: <span id="cnt-summary">0</span> <span className="chev inline-block transform transition-transform">▾</span></div>
+          </button>
+          <div id="summary-panel" className="p-5">
+            <dl id="anomaly-summary-inline" className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+              <div className="p-3 rounded-xl bg-slate-50"><dt className="text-slate-500">Rows</dt><dd id="sum-rows" className="text-lg font-semibold">—</dd></div>
+              <div className="p-3 rounded-xl bg-slate-50"><dt className="text-slate-500">Columns</dt><dd id="sum-cols" className="text-lg font-semibold">—</dd></div>
+              <div className="p-3 rounded-xl bg-slate-50"><dt className="text-slate-500">Missing cells</dt><dd id="sum-missing" className="text-lg font-semibold">—</dd></div>
+              <div className="p-3 rounded-xl bg-slate-50"><dt className="text-slate-500">Type mismatches</dt><dd id="sum-mismatch" className="text-lg font-semibold">—</dd></div>
+              <div className="p-3 rounded-xl bg-slate-50"><dt className="text-slate-500">Duplicates</dt><dd id="sum-dup" className="text-lg font-semibold">—</dd></div>
+            </dl>
           </div>
-          <ul id="mostly-empty-list" className="text-sm list-disc pl-6"></ul>
+        </div>
+
+        {/* Mostly-empty columns list (accordion) */}
+        <div id="mostly-empty-card" className="bg-white rounded-2xl shadow">
+          <button className="w-full flex items-center justify-between px-5 py-3" data-acc-toggle="#mostly-empty-panel">
+            <h3 className="font-semibold">Mostly-empty columns (≥80% empty)</h3>
+            <div className="text-sm text-slate-500">Count: <span id="cnt-mostly-empty">0</span> <span className="chev inline-block transform transition-transform">▾</span></div>
+          </button>
+          <div id="mostly-empty-panel" className="p-5 hidden">
+            <ul id="mostly-empty-list" className="text-sm list-disc pl-6"></ul>
+          </div>
+        </div>
+
+        {/* Duplicates */}
+        <div id="dup-card" className="bg-white rounded-2xl shadow">
+          <button className="w-full flex items-center justify-between px-5 py-3" data-acc-toggle="#dup-panel">
+            <h3 className="font-semibold">Duplicates</h3>
+            <div className="text-sm text-slate-500">Count: <span id="cnt-dup">0</span> <span className="chev inline-block transform transition-transform">▾</span></div>
+          </button>
+          <div id="dup-panel" className="p-5 hidden">
+            <div id="dup-list" className="text-sm"></div>
+          </div>
+        </div>
+
+        {/* Suspicious values */}
+        <div id="susp-card" className="bg-white rounded-2xl shadow">
+          <button className="w-full flex items-center justify-between px-5 py-3" data-acc-toggle="#susp-panel">
+            <h3 className="font-semibold">Unknown / suspicious values (?, NA, null)</h3>
+            <div className="text-sm text-slate-500">Count: <span id="cnt-susp">0</span> <span className="chev inline-block transform transition-transform">▾</span></div>
+          </button>
+          <div id="susp-panel" className="p-5 hidden">
+            <div id="susp-list" className="text-sm"></div>
+          </div>
+        </div>
+
+        {/* Type mismatches (numbers) */}
+        <div id="num-mismatch-card" className="bg-white rounded-2xl shadow">
+          <button className="w-full flex items-center justify-between px-5 py-3" data-acc-toggle="#num-mismatch-panel">
+            <h3 className="font-semibold">Type mismatches (Numeric columns)</h3>
+            <div className="text-sm text-slate-500">Count: <span id="cnt-num-mismatch">0</span> <span className="chev inline-block transform transition-transform">▾</span></div>
+          </button>
+          <div id="num-mismatch-panel" className="p-5 hidden">
+            <div id="num-mismatch-list" className="text-sm"></div>
+          </div>
+        </div>
+
+        {/* Outliers (numeric) */}
+        <div id="outlier-card" className="bg-white rounded-2xl shadow">
+          <button className="w-full flex items-center justify-between px-5 py-3" data-acc-toggle="#outlier-panel">
+            <h3 className="font-semibold">Outliers (Numeric columns)</h3>
+            <div className="text-sm text-slate-500">Count: <span id="cnt-outliers">0</span> <span className="chev inline-block transform transition-transform">▾</span></div>
+          </button>
+          <div id="outlier-panel" className="p-5 hidden">
+            <div id="outlier-list" className="text-sm"></div>
+          </div>
+        </div>
+
+        {/* Dates */}
+        <div id="date-card" className="bg-white rounded-2xl shadow">
+          <button className="w-full flex items-center justify-between px-5 py-3" data-acc-toggle="#date-panel">
+            <h3 className="font-semibold">Date anomalies</h3>
+            <div className="text-sm text-slate-500">Count: <span id="cnt-date">0</span> <span className="chev inline-block transform transition-transform">▾</span></div>
+          </button>
+          <div id="date-panel" className="p-5 hidden">
+            <div id="date-list" className="text-sm"></div>
+          </div>
         </div>
 
         <div id="anomaly-table-card" className="bg-white rounded-2xl shadow p-5 hidden">

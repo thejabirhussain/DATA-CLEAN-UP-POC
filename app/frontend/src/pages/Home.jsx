@@ -21,6 +21,53 @@ export default function Home(){
     let CURRENT_PAGE = 1
     let parquetReady = false
 
+    // History (Undo/Redo)
+    let HISTORY = []
+    let FUTURE = []
+    const snapshot = () => ({ rows: clone(EDITED), columns: clone(COLUMNS) })
+    function pushHistory(){
+      // Push current state then clear FUTURE
+      HISTORY.push(snapshot())
+      if (HISTORY.length > 100) HISTORY.shift()
+      FUTURE = []
+      updateHistoryUI()
+    }
+    function canUndo(){ return HISTORY.length > 0 }
+    function canRedo(){ return FUTURE.length > 0 }
+    function showToast(msg){
+      const toast = document.createElement('div')
+      toast.className = 'fixed top-4 right-4 z-50 bg-slate-900 text-white text-sm px-3 py-2 rounded-lg shadow-lg opacity-0 transition-opacity'
+      toast.textContent = msg
+      document.body.appendChild(toast)
+      // Force reflow then fade in
+      requestAnimationFrame(() => { toast.classList.remove('opacity-0'); toast.classList.add('opacity-90') })
+      setTimeout(() => {
+        toast.classList.remove('opacity-90'); toast.classList.add('opacity-0')
+        setTimeout(() => { document.body.removeChild(toast) }, 250)
+      }, 1600)
+    }
+
+    function undo(){
+      if (!canUndo()) return
+      const prev = HISTORY.pop()
+      // push present into FUTURE
+      FUTURE.push(snapshot())
+      EDITED = clone(prev.rows)
+      COLUMNS = clone(prev.columns)
+      renderTable(); updateHistoryUI();
+      showToast(`Undid 1 change • remaining: ${HISTORY.length}`)
+    }
+    function redo(){
+      if (!canRedo()) return
+      const next = FUTURE.pop()
+      // push present into HISTORY
+      HISTORY.push(snapshot())
+      EDITED = clone(next.rows)
+      COLUMNS = clone(next.columns)
+      renderTable(); updateHistoryUI();
+      showToast(`Redid 1 change • remaining: ${FUTURE.length}`)
+    }
+
     // DOM helpers (scoped to this component)
     const $ = (id) => root.querySelector('#'+id)
     const fileInput = $("file-input")
@@ -35,6 +82,8 @@ export default function Home(){
     const saveRecipeBtn = $("save-recipe")
     const loadRecipeBtn = $("load-recipe")
     const recipeInput = $("recipe-input")
+    const undoBtn = $("undo")
+    const redoBtn = $("redo")
 
     const tCol = $("t-col")
     const tOp = $("t-op")
@@ -154,7 +203,7 @@ export default function Home(){
           const input = document.createElement('input')
           input.value = r[c] ?? ''
           input.className = 'w-full bg-transparent outline-none text-sm'
-          input.addEventListener('change', (e)=> { r[c] = e.target.value })
+          input.addEventListener('change', (e)=> { pushHistory(); r[c] = e.target.value; updateHistoryUI() })
           td.appendChild(input)
           tr.appendChild(td)
         })
@@ -169,6 +218,7 @@ export default function Home(){
       refreshColumnSelect()
       updateReadiness()
       toggleControls(true)
+      updateHistoryUI()
     }
 
     function toggleControls(hasData){
@@ -180,6 +230,30 @@ export default function Home(){
       addStepBtn.disabled = !hasData
       runBtn.disabled = !hasData
       clearEditsBtn.disabled = !hasData
+      updateHistoryUI()
+    }
+
+    function updateHistoryUI(){
+      const undoAvail = canUndo()
+      const redoAvail = canRedo()
+      const setBtnState = (btn, enabled, title) => {
+        if (!btn) return
+        btn.disabled = !enabled
+        btn.classList.toggle('opacity-50', !enabled)
+        btn.classList.toggle('cursor-not-allowed', !enabled)
+        btn.classList.toggle('hover:bg-slate-200', enabled)
+        btn.classList.toggle('bg-emerald-50', enabled)
+        btn.classList.toggle('text-emerald-800', enabled)
+        btn.setAttribute('title', title)
+        const badge = btn.querySelector('.badge')
+        if (badge) badge.textContent = enabled ? (title.match(/\((\d+)\)/)?.[1] || '') : ''
+      }
+      const undoTitle = `Undo (Ctrl+Z)${undoAvail ? ` — (${HISTORY.length})` : ''}`
+      const redoTitle = `Redo (Ctrl+Y or Ctrl+Shift+Z)${redoAvail ? ` — (${FUTURE.length})` : ''}`
+      setBtnState(undoBtn, undoAvail, undoTitle)
+      setBtnState(redoBtn, redoAvail, redoTitle)
+      const info = $("history-info")
+      if (info) info.textContent = `undo:${HISTORY.length} redo:${FUTURE.length}`
     }
 
     async function handleFiles(files){
@@ -238,7 +312,7 @@ export default function Home(){
       CURRENT_PAGE = 1; renderTable()
     })
 
-    clearEditsBtn.addEventListener('click', () => { EDITED = clone(ORIGINAL); renderTable() })
+    clearEditsBtn.addEventListener('click', () => { pushHistory(); EDITED = clone(ORIGINAL); renderTable() })
 
     // Paging
     prevBtn.addEventListener('click', () => { CURRENT_PAGE = Math.max(1, CURRENT_PAGE - 1); renderTable() })
@@ -355,7 +429,7 @@ export default function Home(){
     function applyPipeline(){ EDITED = clone(ORIGINAL); const enabled = PIPELINE.filter(s => s.enabled !== false); enabled.forEach(step => { EDITED = applyStep(EDITED, step) }) }
 
     // Wire buttons
-    runBtn.addEventListener('click', () => { if (!enablePipeline.checked) return; applyPipeline(); renderTable() })
+    runBtn.addEventListener('click', () => { if (!enablePipeline.checked) return; pushHistory(); applyPipeline(); renderTable(); })
     addStepBtn.addEventListener('click', () => { if (!COLUMNS.length) return; const step = { op: tOp.value, col: tCol.value, params: collectParams(), enabled: true }; addStep(step) })
 
     // Export
@@ -403,7 +477,18 @@ export default function Home(){
       const txt = await f.text(); const data = JSON.parse(txt)
       if (Array.isArray(data.columns)) COLUMNS = data.columns
       if (Array.isArray(data.pipeline)) PIPELINE = data.pipeline
+      HISTORY = []; FUTURE = []; updateHistoryUI()
       renderPipeline(); renderTable()
+    })
+
+    // Undo/Redo buttons and shortcuts
+    if (undoBtn) undoBtn.addEventListener('click', undo)
+    if (redoBtn) redoBtn.addEventListener('click', redo)
+    window.addEventListener('keydown', (e) => {
+      const z = (e.key === 'z' || e.key === 'Z')
+      const y = (e.key === 'y' || e.key === 'Y')
+      if ((e.ctrlKey || e.metaKey) && z && !e.shiftKey){ e.preventDefault(); undo() }
+      else if ((e.ctrlKey || e.metaKey) && (y || (z && e.shiftKey))){ e.preventDefault(); redo() }
     })
 
     // Initial
@@ -495,6 +580,17 @@ export default function Home(){
           <div className="flex items-center gap-3 mb-3">
             <div className="text-sm text-slate-600">Rows: <span id="row-count">0</span></div>
             <div className="ml-auto flex items-center gap-2">
+              <button id="undo" aria-label="Undo" className="px-3 py-2 rounded-lg bg-slate-100 text-sm flex items-center gap-2 opacity-50 cursor-not-allowed" disabled>
+                <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path d="M7.707 3.293a1 1 0 00-1.414 0L1.586 8l4.707 4.707a1 1 0 001.414-1.414L5.414 9H11a4 4 0 010 8h-2a1 1 0 100 2h2a6 6 0 000-12H5.414l2.293-2.293a1 1 0 000-1.414z"/></svg>
+                <span>Undo</span>
+                <span className="badge text-[10px] px-1 rounded bg-slate-200 text-slate-700"></span>
+              </button>
+              <button id="redo" aria-label="Redo" className="px-3 py-2 rounded-lg bg-slate-100 text-sm flex items-center gap-2 opacity-50 cursor-not-allowed" disabled>
+                <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path d="M12.293 3.293a1 1 0 011.414 0L18.414 8l-4.707 4.707a1 1 0 01-1.414-1.414L14.586 9H9a4 4 0 100 8h2a1 1 0 110 2H9a6 6 0 110-12h5.586l-2.293-2.293a1 1 0 010-1.414z"/></svg>
+                <span>Redo</span>
+                <span className="badge text-[10px] px-1 rounded bg-slate-200 text-slate-700"></span>
+              </button>
+              {/* <div id="history-info" className="hidden sm:block text-xs text-slate-500 ml-1"></div> */}
               <input id="search" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" placeholder="Search rows" />
               <button id="clear-edits" className="px-3 py-2 rounded-lg bg-slate-100 text-slate-800 text-sm hover:bg-slate-200" disabled>Reset to Original</button>
             </div>

@@ -4,6 +4,9 @@ import * as arrow from 'apache-arrow'
 import initWasm, { readParquet, Table as ParquetTable, writeParquet, WriterPropertiesBuilder, Compression } from 'parquet-wasm'
 import parquetWasmUrl from 'parquet-wasm/esm/parquet_wasm_bg.wasm?url'
 
+// API base to mirror demo.jsx
+const API_BASE = 'http://localhost:8000'
+
 export default function Prep(){
   const rootRef = useRef(null)
 
@@ -17,65 +20,92 @@ export default function Prep(){
     let COLUMNS = []
     let BASE_COLUMNS = []
     let PIPELINE = []
-    const PAGE_SIZE = 50
+    let PAGE_SIZE = 50
     let CURRENT_PAGE = 1
     let parquetReady = false
+    let TOTAL_ROWS = 0
 
-    // History
+    // History (track displayed rows/columns snapshots for manual edits and API-driven changes)
     let HISTORY = []
     let FUTURE = []
-    const snapshot = () => ({ pipeline: clone(PIPELINE), columns: clone(COLUMNS) })
-    const pushHistory = () => { HISTORY.push(snapshot()); if (HISTORY.length>100) HISTORY.shift(); FUTURE = []; updateHistoryInfo() }
-    const undo = () => { if (!HISTORY.length) return; const s = HISTORY.pop(); FUTURE.push(snapshot()); PIPELINE = clone(s.pipeline); COLUMNS = clone(s.columns); renderPipeline(); applyPipeline(); renderTable(); updateHistoryInfo() }
-    const redo = () => { if (!FUTURE.length) return; const s = FUTURE.pop(); HISTORY.push(snapshot()); PIPELINE = clone(s.pipeline); COLUMNS = clone(s.columns); renderPipeline(); applyPipeline(); renderTable(); updateHistoryInfo() }
+    const snapshot = () => ({ rows: clone(EDITED), columns: clone(COLUMNS) })
+    let updateHistoryInfo = () => {}
+    function pushHistory(){ HISTORY.push(snapshot()); if (HISTORY.length>100) HISTORY.shift(); FUTURE = []; updateHistoryInfo() }
+    function canUndo(){ return HISTORY.length > 0 }
+    function canRedo(){ return FUTURE.length > 0 }
+    async function apiUndo(){
+      try{
+        const resp = await fetch(`${API_BASE}/undo`, { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+        const result = await resp.json()
+        if (result.success){
+          displayData(result.preview, result.result_columns, result.total_rows)
+          updateHistoryInfo()
+        }
+      } catch(e){ console.warn('Undo failed', e) }
+    }
+
+    function setTransformStatus(message, type=''){
+      if (!transformStatusEl) return
+      transformStatusEl.textContent = message || ''
+      transformStatusEl.dataset.type = type || ''
+    }
+    function undo(){
+      if (!canUndo()) return
+      const prev = HISTORY.pop()
+      FUTURE.push(snapshot())
+      EDITED = clone(prev.rows)
+      COLUMNS = clone(prev.columns)
+      renderTable(); updateHistoryInfo()
+    }
+    function redo(){
+      if (!canRedo()) return
+      const next = FUTURE.pop()
+      HISTORY.push(snapshot())
+      EDITED = clone(next.rows)
+      COLUMNS = clone(next.columns)
+      renderTable(); updateHistoryInfo()
+    }
 
     // DOM
     const $ = (id) => root.querySelector('#'+id)
     const fileInput = $("file-input"); const pickBtn = $("pick-file"); const dropzone = $("dropzone"); const fileNameEl = $("file-name")
     const exportCSVBtn = $("export-csv"); const exportXLSXBtn = $("export-xlsx"); const exportJSONBtn = $("export-json"); const exportParquetBtn = $("export-parquet"); const saveRecipeBtn = $("save-recipe"); const loadRecipeBtn = $("load-recipe"); const recipeInput = $("recipe-input")
-    const tCol = $("t-col"); const tOp = $("t-op"); const tParams = $("t-params"); const addStepBtn = $("add-step"); const runBtn = $("run-pipeline"); const enablePipeline = $("enable-pipeline")
-    const pipelineList = $("pipeline"); const undoBtn = $("undo"); const redoBtn = $("redo"); const historyInfo = $("history-info")
-    const previewWrap = $("nl-preview-wrap"); const previewList = $("nl-preview"); const applyPreviewBtn = $("apply-preview"); const clearPreviewBtn = $("clear-preview")
+    const undoBtn = $("undo"); const redoBtn = $("redo"); const historyInfo = $("history-info")
+    const chatSidebar = $("chat-sidebar"); const chatMessages = $("chat-messages"); const chatInput = $("chat-input"); const chatSend = $("chat-send"); const chatClear = $("chat-clear"); const mainSection = $("main-section")
+    // Transform DOM (mirroring demo.jsx)
+    const instructionEl = $("instruction"); const transformBtn = $("transform-btn"); const undoBackendBtn = $("undo-backend"); const transformStatusEl = $("transform-status")
+    const followupSection = $("followupSection"); const followupMsgEl = $("followupMessage"); const followupQsEl = $("followupQuestions"); const followupSubmitBtn = $("followupSubmit"); const followupCancelBtn = $("followupCancel")
+    const rowsPerPageEl = $("rowsPerPage")
     const thead = $("thead"); const tbody = $("tbody"); const rowCount = $("row-count"); const pagingInfo = $("paging-info"); const pageInput = $("page"); const prevBtn = $("prev"); const nextBtn = $("next"); const searchInput = $("search"); const clearEditsBtn = $("clear-edits")
     const readinessList = $("readiness-list")
 
-    // NL
-    const nlInput = $("nl-input"); const nlRun = $("nl-run"); const nlMode = $("nl-mode"); const nlExplain = $("nl-explain"); const nlDryrun = $("nl-dryrun"); const nlMsg = $("nl-msg")
-    let LAST_PREVIEW_STEPS = []
+    // Chat state
+    let MESSAGES = []
+    // Transform state
+    let transformLoading = false
+    let sessionId = null
 
     const clone = (x) => JSON.parse(JSON.stringify(x))
     const toTitle = (s) => s.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.substring(1).toLowerCase())
 
-    function renderParams(){
-      const op = tOp.value
-      tParams.innerHTML = ''
-      const add = (label, id, ph='', type='text') => {
-        const wrapper = document.createElement('div')
-        wrapper.innerHTML = `<label class="block text-xs text-slate-600">${label}</label>
-          <input id="${id}" type="${type}" class="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" placeholder="${ph}">`
-        tParams.appendChild(wrapper)
-      }
-      const addSelect = (label, id, opts) => {
-        const wrapper = document.createElement('div')
-        const options = opts.map(o => `<option value="${o}">${o}</option>`).join('')
-        wrapper.innerHTML = `<label class="block text-xs text-slate-600">${label}</label>
-          <select id="${id}" class="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm">${options}</select>`
-        tParams.appendChild(wrapper)
-      }
-      if (op === 'replace') { add('Find','p-find','e.g., \\s+'); add('Replace With','p-repl','e.g., space'); addSelect('Use RegExp?','p-regex',['no','yes']) }
-      else if (op === 'fill_empty') { add('Value for blanks','p-fill','e.g., 0') }
-      else if (op === 'split') { add('Delimiter','p-delim','e.g., - or ,'); add('New column base name','p-base','e.g., part'); add('Max parts (optional)','p-max','e.g., 3','number') }
-      else if (op === 'extract') { add('RegExp (capture group 1 used)','p-reg','e.g., (\\d{4,})'); add('New column name','p-newname','e.g., natural_account') }
-      else if (op === 'rename_col') { add('New column name','p-newname','e.g., natural_account') }
-      else if (op === 'new_col_compute') { add('New column name','p-newname','e.g., amount_usd'); add('Compute expression','p-expr','e.g., Number(amount) * 1.1') }
-      else if (op === 'merge_cols') { add('Columns to merge (comma separated)','p-cols','e.g., company, dept, account'); add('Delimiter','p-delim','e.g., -'); add('New column name','p-newname','e.g., account_path') }
-      else if (op === 'math_col_const') { addSelect('Operator','p-opr',['+','-','*','/']); add('Constant','p-const','e.g., 100') }
-      else if (op === 'math_two_cols') { add('Other column','p-col2','e.g., quantity'); addSelect('Operator','p-opr',['+','-','*','/']); add('New column name (optional)','p-newname','e.g., total') }
+    // Display helper: render chat messages
+    function renderChat(){
+      if (!chatMessages) return
+      chatMessages.innerHTML = ''
+      MESSAGES.forEach(m => {
+        const div = document.createElement('div')
+        const isUser = m.role === 'user'
+        div.className = `max-w-[80%] mb-2 px-3 py-2 rounded-2xl text-sm ${isUser? 'bg-emerald-600 text-white ml-auto' : 'bg-slate-100 text-slate-800 mr-auto'}`
+        div.textContent = m.text
+        chatMessages.appendChild(div)
+      })
+      chatMessages.parentElement && (chatMessages.parentElement.scrollTop = chatMessages.parentElement.scrollHeight)
     }
 
-    function refreshColumnSelect(){ tCol.innerHTML = COLUMNS.map(c=>`<option value="${c}">${c}</option>`).join('') }
+    function refreshColumnSelect(){ /* removed Add Transform UI */ }
 
     function updateReadiness(){
+      if (!readinessList) return
       const required = ['entity_id','legal_entity_name','erp_account_code','natural_account','account_name','amount','currency','period','posting_date']
       readinessList.innerHTML = ''
       required.forEach((req) => {
@@ -101,7 +131,7 @@ export default function Prep(){
     }
 
     function renderTable(){
-      rowCount.textContent = EDITED.length
+      rowCount.textContent = TOTAL_ROWS
       thead.innerHTML = ''
       const trh = document.createElement('tr')
       COLUMNS.forEach((c, idx) => {
@@ -114,14 +144,15 @@ export default function Prep(){
       thead.appendChild(trh)
       enableHeaderDrag()
 
-      const totalPages = Math.max(1, Math.ceil(EDITED.length / PAGE_SIZE))
+      const totalPages = Math.max(1, Math.ceil(TOTAL_ROWS / PAGE_SIZE))
       CURRENT_PAGE = Math.min(CURRENT_PAGE, totalPages)
-      const start = (CURRENT_PAGE - 1) * PAGE_SIZE
-      const end = Math.min(start + PAGE_SIZE, EDITED.length)
+      const pageStartNum = (CURRENT_PAGE - 1) * PAGE_SIZE + 1
+      const pageEndNum = Math.min(CURRENT_PAGE * PAGE_SIZE, TOTAL_ROWS)
 
       tbody.innerHTML = ''
-      for (let i=start; i<end; i++){
+      for (let i=0; i<EDITED.length; i++){
         const r = EDITED[i]
+        if (!r) continue
         const tr = document.createElement('tr')
         COLUMNS.forEach((c, idx) => {
           const td = document.createElement('td')
@@ -129,7 +160,7 @@ export default function Prep(){
           const input = document.createElement('input')
           input.value = r[c] ?? ''
           input.className = 'w-full bg-transparent outline-none text-sm'
-          input.addEventListener('change', (e) => { r[c] = e.target.value })
+          input.addEventListener('change', (e) => { pushHistory(); r[c] = e.target.value; updateHistoryInfo() })
           td.appendChild(input)
           tr.appendChild(td)
         })
@@ -139,57 +170,144 @@ export default function Prep(){
       pageInput.value = CURRENT_PAGE
       prevBtn.disabled = CURRENT_PAGE <= 1
       nextBtn.disabled = CURRENT_PAGE >= totalPages
-      pagingInfo.textContent = `Page ${CURRENT_PAGE} / ${totalPages} (rows ${start+1}-${end})`
+      pagingInfo.textContent = `Page ${CURRENT_PAGE} / ${totalPages} (rows ${pageStartNum}-${pageEndNum})`
 
       refreshColumnSelect(); updateReadiness(); toggleControls(true)
     }
 
-    function toggleControls(hasData){ exportCSVBtn.disabled = !hasData; exportXLSXBtn.disabled = !hasData; if (exportJSONBtn) exportJSONBtn.disabled = !hasData; if (exportParquetBtn) exportParquetBtn.disabled = !hasData; saveRecipeBtn.disabled = !hasData; addStepBtn.disabled = !hasData; runBtn.disabled = !hasData; clearEditsBtn.disabled = !hasData }
+    function toggleControls(hasData){ exportCSVBtn.disabled = !hasData; exportXLSXBtn.disabled = !hasData; if (exportJSONBtn) exportJSONBtn.disabled = !hasData; if (exportParquetBtn) exportParquetBtn.disabled = !hasData; saveRecipeBtn.disabled = !hasData; if (clearEditsBtn) clearEditsBtn.disabled = !hasData }
 
     async function ensureParquetInit(){ if (parquetReady) return; await initWasm(parquetWasmUrl); parquetReady = true }
 
     function tableToRows(arrowTable){ const cols = arrowTable.schema.fields.map(f => f.name); const n = arrowTable.numRows; const rows = new Array(n); const vectors = cols.map(name => arrowTable.getColumn(name)); for (let i=0;i<n;i++){ const obj={}; for (let c=0;c<cols.length;c++) obj[cols[c]] = vectors[c]?.get(i) ?? null; rows[i]=obj } return { rows, cols } }
     function rowsToArrowTable(rows, cols){ const arrays={}; const headers = cols && cols.length ? cols : Object.keys(rows[0]||{}); headers.forEach(h => arrays[h] = rows.map(r => r[h])); return arrow.tableFromArrays(arrays) }
 
+    // API-powered data display (mirror demo.jsx)
+    function displayData(preview, cols, total){
+      if (Array.isArray(preview) && preview.length){
+        EDITED = clone(preview)
+      }
+      if (Array.isArray(cols) && cols.length){
+        COLUMNS = clone(cols)
+      } else if (Array.isArray(preview) && preview.length){
+        COLUMNS = Object.keys(preview[0] || {})
+      } else {
+        COLUMNS = []
+      }
+      TOTAL_ROWS = total || 0
+      ORIGINAL = clone(EDITED)
+      renderTable()
+    }
+
+    async function loadDataPage(targetPage){
+      try{
+        const resp = await fetch(`${API_BASE}/data?page=${targetPage}&rows_per_page=${PAGE_SIZE}`)
+        const result = await resp.json()
+        if (resp.ok){ CURRENT_PAGE = targetPage; displayData(result.data, result.columns, result.total_rows) }
+      } catch(e){ /* silent */ }
+    }
+
+    // Transform logic (mirroring demo.jsx)
+    async function transformData(){
+      const text = (instructionEl?.value || '').trim()
+      if (!text){ setTransformStatus('Please enter an instruction', 'error'); return }
+      const startTime = performance.now(); transformLoading = true
+      try{
+        const body = { instruction: text }
+        if (sessionId) body.session_id = sessionId
+        const resp = await fetch(`${API_BASE}/transform`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body) })
+        const result = await resp.json()
+        if (result.success){
+          sessionId = result.session_id || null
+          if (result.type === 'clarification_needed'){
+            if (followupSection && followupMsgEl && followupQsEl){
+              followupSection.classList.remove('hidden')
+              followupMsgEl.textContent = result.message || ''
+              followupQsEl.innerHTML = ''
+              ;(result.questions||[]).forEach((q, idx) => {
+                const div = document.createElement('div')
+                div.className = 'mb-2'
+                div.innerHTML = `<label class="block text-sm font-medium mb-1">${idx+1}. ${q}</label><textarea data-idx="${idx}" class="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" rows="2" placeholder="Enter your response..."></textarea>`
+                followupQsEl.appendChild(div)
+              })
+            }
+            setTransformStatus('Additional information needed. Please answer the questions below.', 'info')
+          } else {
+            const endTime = performance.now()
+            const executionTime = ((endTime - startTime)/1000).toFixed(2)
+            let msg = ''
+            if (result.type === 'transformation'){
+              msg = `Transformation completed in ${executionTime}s! Result: ${result.result_shape[0]} rows × ${result.result_shape[1]} columns`
+              pushHistory(); await loadDataPage(1)
+            } else {
+              msg = `Processing completed in ${executionTime}s! ${result.message || 'Operation successful'}`
+            }
+            if (result.execution_log && result.execution_log.includes('Execution time:')){
+              const m = result.execution_log.match(/Execution time: ([\d.]+)s/); if (m) msg += ` (Backend: ${m[1]}s)`
+            }
+            setTransformStatus(msg, 'success')
+            if (instructionEl) instructionEl.value = ''
+            sessionId = null
+            if (followupSection){ followupSection.classList.add('hidden') }
+            if (followupQsEl) followupQsEl.innerHTML = ''
+          }
+        } else {
+          setTransformStatus(`Transformation failed: ${result.error}`, 'error'); sessionId = null; if (followupSection){ followupSection.classList.add('hidden') }
+        }
+      } catch(e){ setTransformStatus(`Transform error: ${e.message}`, 'error'); sessionId = null; if (followupSection){ followupSection.classList.add('hidden') } }
+      finally{ transformLoading = false }
+    }
+
+    async function undoBackend(){
+      try{
+        const resp = await fetch(`${API_BASE}/undo`, { method:'POST', headers:{ 'Content-Type':'application/json' } })
+        const result = await resp.json()
+        if (result.success){ setTransformStatus('Successfully undone last transformation!', 'success'); await loadDataPage(1) }
+        else { setTransformStatus(`Undo failed: ${result.error}`, 'error') }
+      } catch(e){ setTransformStatus(`Undo error: ${e.message}`, 'error') }
+    }
+
+    async function submitFollowup(){
+      if (!sessionId){ setTransformStatus('No active session for follow-up', 'error'); return }
+      const startTime = performance.now(); transformLoading = true
+      try{
+        const answers = Array.from(followupQsEl?.querySelectorAll('textarea')||[]).map(t => t.value)
+        const resp = await fetch(`${API_BASE}/follow-up`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ session_id: sessionId, responses: answers }) })
+        const result = await resp.json()
+        if (result.success){
+          const endTime = performance.now(); const executionTime = ((endTime - startTime)/1000).toFixed(2)
+          let msg = ''
+          if (result.type === 'transformation'){
+            msg = `Transformation completed in ${executionTime}s! Result: ${result.result_shape[0]} rows × ${result.result_shape[1]} columns`
+            pushHistory(); await loadDataPage(1)
+          } else { msg = `Processing completed in ${executionTime}s! ${result.message || 'Operation successful'}` }
+          if (result.execution_log && result.execution_log.includes('Execution time:')){
+            const m = result.execution_log.match(/Execution time: ([\d.]+)s/); if (m) msg += ` (Backend: ${m[1]}s)`
+          }
+          setTransformStatus(msg, 'success'); sessionId = null; if (followupSection){ followupSection.classList.add('hidden') }; if (followupQsEl) followupQsEl.innerHTML = ''
+        } else { setTransformStatus(`Follow-up processing failed: ${result.error}`, 'error') }
+      } catch(e){ setTransformStatus(`Follow-up error: ${e.message}`, 'error') }
+      finally{ transformLoading = false }
+    }
+
+    function cancelFollowup(){
+      if (followupSection) followupSection.classList.add('hidden')
+      if (followupQsEl) followupQsEl.innerHTML = ''
+      sessionId = null
+      setTransformStatus('Follow-up cancelled. You can try a different instruction.', 'info')
+    }
+
     async function handleFiles(files){
       if (!files || !files[0]) return
       const f = files[0]
       fileNameEl.textContent = f.name
-      const name = f.name || ''
-      const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : ''
-      if (["xlsx","xls","csv"].includes(ext)){
-        const buf = await f.arrayBuffer()
-        const wb = XLSX.read(buf, { type: 'array' })
-        const ws = wb.Sheets[wb.SheetNames[0]]
-        const json = XLSX.utils.sheet_to_json(ws, { defval: '' , raw: false})
-        const headerRow = XLSX.utils.sheet_to_json(ws, { header: 1 })[0] || []
-        COLUMNS = (headerRow.length ? headerRow : Object.keys(json[0] || {})).map(String)
-        ORIGINAL = json; EDITED = clone(json)
-      } else if (ext === 'json'){
-        const txt = await f.text()
-        let data = JSON.parse(txt)
-        if (!Array.isArray(data)) data = Array.isArray(data?.data) ? data.data : [data]
-        const cols = new Set(); data.forEach(r => Object.keys(r||{}).forEach(k => cols.add(String(k))))
-        COLUMNS = Array.from(cols)
-        ORIGINAL = data; EDITED = clone(data)
-      } else if (ext === 'parquet'){
-        await ensureParquetInit()
-        const buf = new Uint8Array(await f.arrayBuffer())
-        const wasmTable = readParquet(buf)
-        const table = arrow.tableFromIPC(wasmTable.intoIPCStream())
-        const { rows, cols } = tableToRows(table)
-        COLUMNS = cols
-        ORIGINAL = rows; EDITED = clone(rows)
-      } else {
-        alert('Unsupported file type. Please upload CSV, XLSX, JSON, or Parquet.')
-        return
-      }
-      BASE_COLUMNS = clone(COLUMNS)
-      PIPELINE = []
-      HISTORY = []; FUTURE = []; updateHistoryInfo()
-      applyPipeline();
-      renderTable();
-      renderPipeline()
+      const formData = new FormData()
+      formData.append('file', f)
+      try{
+        const resp = await fetch(`${API_BASE}/upload`, { method: 'POST', body: formData })
+        const result = await resp.json()
+        if (resp.ok){ displayData(result.preview, result.columns, result.total_rows); HISTORY = []; FUTURE = []; updateHistoryInfo() }
+      } catch(e){ console.warn('Upload failed', e) }
     }
 
     pickBtn.addEventListener('click', () => fileInput.click())
@@ -199,45 +317,66 @@ export default function Prep(){
     dropzone.addEventListener('drop', (e) => handleFiles(e.dataTransfer.files))
 
     // Search & paging
-    searchInput.addEventListener('input', () => { const q = searchInput.value.toLowerCase(); if (!q) { EDITED = clone(ORIGINAL); renderTable(); return } EDITED = ORIGINAL.filter(r => COLUMNS.some(c => String(r[c] ?? '').toLowerCase().includes(q))); CURRENT_PAGE = 1; renderTable() })
+    searchInput.addEventListener('input', () => { const q = searchInput.value.toLowerCase(); if (!q) { EDITED = clone(ORIGINAL); renderTable(); return } EDITED = ORIGINAL.filter(r => COLUMNS.some(c => String(r[c] ?? '').toLowerCase().includes(q))); renderTable() })
     clearEditsBtn.addEventListener('click', () => { EDITED = clone(ORIGINAL); renderTable() })
-    prevBtn.addEventListener('click', () => { CURRENT_PAGE = Math.max(1, CURRENT_PAGE - 1); renderTable() })
-    nextBtn.addEventListener('click', () => { CURRENT_PAGE += 1; renderTable() })
-    pageInput.addEventListener('change', () => { CURRENT_PAGE = Math.max(1, parseInt(pageInput.value||'1',10)); renderTable() })
+    prevBtn.addEventListener('click', async () => { if (CURRENT_PAGE > 1) await loadDataPage(CURRENT_PAGE - 1) })
+    nextBtn.addEventListener('click', async () => { const totalPages = Math.max(1, Math.ceil(TOTAL_ROWS / PAGE_SIZE)); if (CURRENT_PAGE < totalPages) await loadDataPage(CURRENT_PAGE + 1) })
+    pageInput.addEventListener('change', async () => { const totalPages = Math.max(1, Math.ceil(TOTAL_ROWS / PAGE_SIZE)); const p = Math.max(1, Math.min(totalPages, parseInt(pageInput.value||'1',10))); await loadDataPage(p) })
 
-    // Pipeline
-    tOp.addEventListener('change', renderParams)
-    if (enablePipeline) enablePipeline.addEventListener('change', () => { applyPipeline(); renderTable() })
-    runBtn.addEventListener('click', () => { applyPipeline(); renderTable() })
-    addStepBtn.addEventListener('click', () => { if (!COLUMNS.length) return; pushHistory(); const step = { op: tOp.value, col: tCol.value, params: collectParams(), enabled: true }; addStep(step) })
+    // Sidebar always visible; no toggle behavior
 
-    if (undoBtn) undoBtn.addEventListener('click', undo)
+    if (undoBtn) undoBtn.addEventListener('click', async () => { if (canUndo()) { undo() } else { await apiUndo() } })
     if (redoBtn) redoBtn.addEventListener('click', redo)
     window.addEventListener('keydown', (e) => { const z = (e.key === 'z' || e.key === 'Z'); if ((e.metaKey || e.ctrlKey) && z && !e.shiftKey) { e.preventDefault(); undo() } if ((e.metaKey || e.ctrlKey) && z && e.shiftKey) { e.preventDefault(); redo() } })
 
-    function updateHistoryInfo(){ if (historyInfo) historyInfo.textContent = `undo:${HISTORY.length} redo:${FUTURE.length}` }
-
-    function renderPipeline(){
-      pipelineList.innerHTML = ''
-      PIPELINE.forEach((step, idx) => {
-        const li = document.createElement('li')
-        li.className = 'border border-slate-200 rounded-xl p-2 flex items-start gap-2'
-        const label = document.createElement('div'); label.className = 'text-xs flex-1'; label.textContent = `${idx+1}. ${step.op} on ${step.col}`
-        const btns = document.createElement('div'); btns.className = 'flex items-center gap-2'
-        const onoff = document.createElement('input'); onoff.type = 'checkbox'; onoff.checked = step.enabled !== false; onoff.addEventListener('change', () => { pushHistory(); step.enabled = onoff.checked; applyPipeline(); renderTable(); renderPipeline() })
-        const del = document.createElement('button'); del.textContent = 'Delete'; del.className = 'px-2 py-1 rounded bg-slate-100 text-xs'; del.addEventListener('click', () => { pushHistory(); PIPELINE.splice(idx,1); applyPipeline(); renderTable(); renderPipeline() })
-        btns.appendChild(onoff); btns.appendChild(del); li.appendChild(label); li.appendChild(btns); pipelineList.appendChild(li)
-      })
+    function updateHistoryUI(){
+      const undoAvail = canUndo()
+      const redoAvail = canRedo()
+      const setBtnState = (btn, enabled, title) => {
+        if (!btn) return
+        btn.disabled = !enabled
+        btn.classList.toggle('opacity-50', !enabled)
+        btn.classList.toggle('cursor-not-allowed', !enabled)
+        btn.classList.toggle('hover:bg-slate-200', enabled)
+        btn.classList.toggle('bg-emerald-50', enabled)
+        btn.classList.toggle('text-emerald-800', enabled)
+        btn.setAttribute('title', title)
+        const badge = btn.querySelector('.badge')
+        if (badge) badge.textContent = enabled ? (title.match(/\((\d+)\)/)?.[1] || '') : ''
+      }
+      const undoTitle = `Undo (Ctrl+Z)${undoAvail ? ` — (${HISTORY.length})` : ''}`
+      const redoTitle = `Redo (Ctrl+Y or Ctrl+Shift+Z)${redoAvail ? ` — (${FUTURE.length})` : ''}`
+      setBtnState(undoBtn, undoAvail, undoTitle)
+      setBtnState(redoBtn, redoAvail, redoTitle)
+      if (historyInfo) historyInfo.textContent = `undo:${HISTORY.length} redo:${FUTURE.length}`
     }
+    updateHistoryInfo = updateHistoryUI
 
-    // Ensure new steps apply immediately and UI reflects the change
-    function addStep(step){
-      if (!COLUMNS.length) return
-      PIPELINE.push(step)
-      renderPipeline()
-      applyPipeline()
-      renderTable()
+    // Chat send
+    function addChatMessage(role, text){ MESSAGES.push({ role, text }); renderChat() }
+    async function sendChat(){
+      if (!chatInput) return
+      const message = (chatInput.value||'').trim(); if (!message) return
+      addChatMessage('user', message); chatInput.value = ''
+      try{
+        const resp = await fetch(`${API_BASE}/chat`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ message }) })
+        const result = await resp.json()
+        if (result.success){
+          addChatMessage('assistant', result.message)
+          if (result.dataframe_updated){ pushHistory(); await loadDataPage(1) }
+        } else { addChatMessage('assistant', `Sorry, I encountered an error: ${result.error}`) }
+      } catch(e){ addChatMessage('assistant', `Sorry, I'm having connection issues: ${e.message}`) }
     }
+    if (chatSend) chatSend.addEventListener('click', sendChat)
+    if (chatInput) chatInput.addEventListener('keydown', (e) => { if (e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendChat() } })
+    if (chatClear) chatClear.addEventListener('click', () => { MESSAGES = []; renderChat() })
+    if (transformBtn) transformBtn.addEventListener('click', transformData)
+    if (undoBackendBtn) undoBackendBtn.addEventListener('click', undoBackend)
+    if (followupSubmitBtn) followupSubmitBtn.addEventListener('click', submitFollowup)
+    if (followupCancelBtn) followupCancelBtn.addEventListener('click', () => { if (followupSection) followupSection.classList.add('hidden'); if (followupQsEl) followupQsEl.innerHTML = ''; sessionId = null; setTransformStatus('Follow-up cancelled. You can try a different instruction.', 'info') })
+    if (rowsPerPageEl) rowsPerPageEl.addEventListener('change', async (e) => { PAGE_SIZE = parseInt(e.target.value,10) || 50; await loadDataPage(1) })
+
+    // removed addStep/pipeline UI
 
     function collectParams(){ const params = {}; ['p-find','p-repl','p-regex','p-fill','p-delim','p-base','p-max','p-reg','p-newname','p-expr','p-cols','p-opr','p-const','p-col2'].forEach(id => { const el = $(id); if (el) params[id] = el.value }); return params }
 
@@ -285,71 +424,29 @@ export default function Prep(){
       return out
     }
 
-    // NL Local + AI
-    const ALLOWED_OPS = ['trim','upper','lower','title','replace','coerce_number','coerce_date','fill_empty','split','extract','delete_col','rename_col','new_col_compute','merge_cols','math_col_const','math_two_cols']
-    const NL_SERVER_SYNONYMS = { 'acct':'account','gl':'erp_account_code','glaccount':'erp_account_code','accountcode':'erp_account_code','accountnumber':'erp_account_code','natural':'natural_account','entity':'entity_id','legal entity':'legal_entity_name','value':'amount','posted':'posting_date','date':'posting_date' }
+    // Removed NL local parser and AI step preview in favor of chat-only UI
 
-    function extractQuoted(str){ const out=[]; let i=0; while ((i = str.indexOf("\"", i)) !== -1){ const j = str.indexOf("\"", i+1); if (j===-1) break; out.push(str.slice(i+1,j)); i = j+1 } return out }
+    
 
-    function nlToStepsLocal(prompt){
-      const NL_SYNONYMS = { 'acct':'account','gl':'erp_account_code','glaccount':'erp_account_code','accountcode':'erp_account_code','accountnumber':'erp_account_code','natural':'natural_account','entity':'entity_id','legal entity':'legal_entity_name','value':'amount','posted':'posting_date','date':'posting_date' }
-      const p = prompt; const lower = p.toLowerCase(); const quoted = extractQuoted(p); const steps = []
-      function findCol(name){ if (!name) return null; const norm = s => String(s).toLowerCase().replace(/[^a-z0-9]/g,''); let cand = String(name).toLowerCase(); if (NL_SYNONYMS[cand]) cand = NL_SYNONYMS[cand]; const q = norm(cand); let hit = COLUMNS.find(c => norm(c) === q); if (hit) return hit; hit = COLUMNS.find(c => norm(c).includes(q) || q.includes(norm(c))); if (hit) return hit; const qTokens = q.split(/_/).filter(Boolean); hit = COLUMNS.find(c => { const cn = norm(c); return qTokens.every(tok => cn.includes(tok)) }); return hit || null }
-      if (lower.includes('remove') || lower.includes('delete') || lower.includes('drop')){ const targets = quoted.length ? quoted : COLUMNS.filter(c => lower.includes(c.toLowerCase())); const uniq = Array.from(new Set(targets.map(findCol).filter(Boolean))); uniq.forEach(col => steps.push({ op:'delete_col', col, params:{}, enabled:true })) }
-      if (lower.includes('merge') || lower.includes('concatenate') || lower.includes('concat') || lower.includes('combine')){ let col1=null, col2=null; if (quoted.length>=2){ col1=findCol(quoted[0]); col2=findCol(quoted[1]) } if ((!col1 || !col2) && quoted.length<2){ const hits=COLUMNS.filter(c => lower.includes(c.toLowerCase())); if (hits.length>=2){ col1=hits[0]; col2=hits[1] } } let delim=''; if (lower.includes('with') && quoted.length>=3){ delim=quoted[2] } let newname=''; if (lower.includes(' into ') || lower.includes(' as ')){ newname = quoted[quoted.length-1] || '' } if (col1 && col2){ const name = newname || `${col1}_${col2}`; steps.push({ op:'merge_cols', col: col1, params: { 'p-cols': `${col1}, ${col2}`, 'p-delim': delim, 'p-newname': name }, enabled:true }) } }
-      if (lower.includes('find') && lower.includes('values') && lower.includes('have') && quoted.length>=1){ const needle = quoted[0]; const name = `flag_contains_${needle.replace(/\W+/g,'_')}`; const expr = `Object.values(ctx).some(v => String(v).includes("${needle.replace(/"/g,'\\"')}")) ? 1 : 0`; steps.push({ op:'new_col_compute', col: (COLUMNS[0] || ''), params: { 'p-newname': name, 'p-expr': expr }, enabled:true }) }
-      return steps
-    }
+    
 
-    async function nlToStepsAI(prompt, opts={}){
-      if (!COLUMNS.length) return { steps: [], explanation: 'No data loaded.' }
-      const sample = ORIGINAL.slice(0, Math.min(10, ORIGINAL.length))
-      const requiredCore = ['entity_id','legal_entity_name','erp_account_code','natural_account','account_name','amount','currency','period','posting_date']
-      const payload = { prompt, columns: COLUMNS, sample, allowed_ops: ALLOWED_OPS, synonyms: NL_SERVER_SYNONYMS, mapping_readiness: requiredCore, explain: !!opts.explain }
-      const res = await fetch('/api/nl', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) })
-      if (!res.ok) throw new Error('Server returned ' + res.status)
-      const data = await res.json()
-      let steps = Array.isArray(data.steps) ? data.steps : []
-      steps = steps.filter(s => s && ALLOWED_OPS.includes(s.op))
-      steps.forEach(s => { if (!s.params) s.params = {}; if (typeof s.enabled === 'undefined') s.enabled = true })
-      steps = steps.filter(s => { if (s.col && !COLUMNS.includes(s.col)) return false; if (s.op === 'merge_cols' && s.params['p-cols']){ const cols = s.params['p-cols'].split(',').map(x=>x.trim()); return cols.every(c=>COLUMNS.includes(c)) } return true })
-      return { steps, explanation: data.explanation || '' }
-    }
+    
 
-    function renderPreviewList(steps){ LAST_PREVIEW_STEPS = steps; previewList.innerHTML = ''; steps.forEach((s, i) => { const li = document.createElement('li'); li.className = 'border border-slate-200 rounded-xl p-2 flex items-start gap-2'; li.textContent = `${i+1}. ${s.op} on ${s.col || '(n/a)'}`; previewList.appendChild(li) }); previewWrap.classList.remove('hidden') }
-
-    if (applyPreviewBtn) applyPreviewBtn.addEventListener('click', () => { if (!LAST_PREVIEW_STEPS.length) return; pushHistory(); LAST_PREVIEW_STEPS.forEach(s => PIPELINE.push(s)); LAST_PREVIEW_STEPS = []; previewWrap.classList.add('hidden'); applyPipeline(); renderTable(); renderPipeline() })
-    if (clearPreviewBtn) clearPreviewBtn.addEventListener('click', () => { LAST_PREVIEW_STEPS = []; previewWrap.classList.add('hidden') })
-
-    async function nlApply(){
-      const prompt = (nlInput.value || '').trim(); if (!prompt) return
-      const mode = (nlMode && nlMode.value) || 'local'
-      let steps = []; let explanation = ''
-      if (mode === 'ai'){
-        try { const out = await nlToStepsAI(prompt, { explain: nlExplain && nlExplain.checked }); steps = out.steps; explanation = out.explanation || '' }
-        catch(e){ explanation = 'AI error: ' + e.message + ' — falling back to local parser.'; steps = nlToStepsLocal(prompt) }
-      } else { steps = nlToStepsLocal(prompt) }
-      if (!steps.length){ alert('Sorry, I could not understand that.'); return }
-      if (nlDryrun && nlDryrun.checked){ renderPreviewList(steps); if (nlMsg) nlMsg.textContent = (explanation || ('Planned ' + steps.length + ' step(s).')); return }
-      pushHistory(); steps.forEach(s => PIPELINE.push(s)); applyPipeline(); renderTable(); renderPipeline(); if (nlMsg) nlMsg.textContent = (explanation || ('Applied ' + steps.length + ' step(s).'))
-    }
-
-    if (nlRun) nlRun.addEventListener('click', nlApply)
-    if (nlInput) nlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') nlApply() })
+    
 
     
 
     function downloadString(str, type, filename){ const blob = new Blob([str], { type }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url) },0) }
 
-    exportCSVBtn.addEventListener('click', () => { const ws = XLSX.utils.json_to_sheet(EDITED, { header: COLUMNS }); const csv = XLSX.utils.sheet_to_csv(ws); downloadString(csv, 'text/csv;charset=utf-8;', 'cleaned.csv') })
+    exportCSVBtn.addEventListener('click', () => { const ws = XLSX.utils.json_to_sheet(EDITED, { header: COLUMNS }); const csv = XLSX.utils.sheet_to_csv(ws); downloadString(csv, 'text/csv;charset=utf-8;', 'cleaned_page.csv') })
     exportXLSXBtn.addEventListener('click', () => { const ws = XLSX.utils.json_to_sheet(EDITED, { header: COLUMNS }); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Cleaned'); const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }); const blob = new Blob([out], { type: 'application/octet-stream' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'cleaned.xlsx'; document.body.appendChild(a); a.click(); setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url) },0) })
     if (exportJSONBtn) exportJSONBtn.addEventListener('click', () => { const jsonStr = JSON.stringify(EDITED, null, 2); const blobType = 'application/json'; const url = URL.createObjectURL(new Blob([jsonStr], { type: blobType })); const a = document.createElement('a'); a.href = url; a.download = 'cleaned.json'; document.body.appendChild(a); a.click(); setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url) },0) })
     if (exportParquetBtn) exportParquetBtn.addEventListener('click', async () => { try { await ensureParquetInit(); const table = rowsToArrowTable(EDITED, COLUMNS); const wasmTable = ParquetTable.fromIPCStream(arrow.tableToIPC(table, 'stream')); const writerProps = new WriterPropertiesBuilder().setCompression(Compression.ZSTD).build(); const pq = writeParquet(wasmTable, writerProps); const blob = new Blob([pq], { type: 'application/octet-stream' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'cleaned.parquet'; document.body.appendChild(a); a.click(); setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url) },0) } catch (e){ console.error(e); alert('Failed to export Parquet: ' + e.message) } })
     saveRecipeBtn.addEventListener('click', () => { const recipe = JSON.stringify({ pipeline: PIPELINE, columns: COLUMNS }, null, 2); downloadString(recipe,'application/json','recipe.json') })
     loadRecipeBtn.addEventListener('click', () => recipeInput.click())
-    recipeInput.addEventListener('change', async (e) => { const f = e.target.files?.[0]; if (!f) return; const txt = await f.text(); const data = JSON.parse(txt); if (Array.isArray(data.columns)) { COLUMNS = data.columns; BASE_COLUMNS = clone(COLUMNS) } if (Array.isArray(data.pipeline)) PIPELINE = data.pipeline; HISTORY = []; FUTURE = []; updateHistoryInfo(); applyPipeline(); renderTable(); renderPipeline() })
+    recipeInput.addEventListener('change', async (e) => { const f = e.target.files?.[0]; if (!f) return; const txt = await f.text(); const data = JSON.parse(txt); if (Array.isArray(data.columns)) { COLUMNS = data.columns } HISTORY = []; FUTURE = []; updateHistoryInfo(); renderTable() })
 
-    renderParams()
+    // No params to render for removed transform UI
 
     return () => { /* cleanup minimal */ }
   }, [])
@@ -375,96 +472,67 @@ export default function Prep(){
       </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        <section className="lg:col-span-1 space-y-6">
-          <div className="bg-white rounded-2xl shadow p-4 relative overflow-hidden">
-            <h2 className="text-base font-semibold mb-3">Ask in English (beta)</h2>
-            <div className="flex items-center gap-2 flex-wrap">
-              <input id="nl-input" className="flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm" placeholder='e.g., remove "column a"; merge "d" and "e" with "-" into "acct_path"; find values that have "?"' />
-              <button id="nl-run" className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-sm hover:bg-emerald-700">Apply</button>
-              <select id="nl-mode" className="rounded-xl border border-slate-300 px-2 py-2 text-sm max-w-[150px]">
-                <option value="local">Local parser</option>
-                <option value="ai">AI</option>
-              </select>
-              <label className="flex items-center gap-1 text-xs text-slate-600">
-                <input id="nl-explain" type="checkbox" className="rounded" /> Explain
-              </label>
-              <label className="flex items-center gap-1 text-xs text-slate-600">
-                <input id="nl-dryrun" type="checkbox" className="rounded" /> Dry run
-              </label>
-            </div>
-            <p className="text-xs text-slate-500 mt-2">Natural language commands translate to pipeline steps (shown below). You can still edit steps manually.</p>
-            <div id="nl-msg" className="mt-2 text-xs text-slate-500 whitespace-pre-wrap"></div>
+        {/* Collapsible Sidebar: Transform + Chat */}
+        <aside id="chat-sidebar" className="lg:col-span-1 bg-white rounded-2xl shadow p-4">
+          <div className="flex items-center mb-3">
+            <h2 className="text-base font-semibold">AI Assistant</h2>
           </div>
-
-          <div className="bg-white rounded-2xl shadow p-4">
-            <h2 className="text-base font-semibold mb-3">Add Transform</h2>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs text-slate-600">Target Column</label>
-                <select id="t-col" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"></select>
-              </div>
-              <div>
-                <label className="block text-xs text-slate-600">Operation</label>
-                <select id="t-op" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm">
-                  <option value="trim">Trim</option>
-                  <option value="upper">Uppercase</option>
-                  <option value="lower">Lowercase</option>
-                  <option value="title">Title Case</option>
-                  <option value="replace">Replace (find → with)</option>
-                  <option value="coerce_number">Coerce → Number</option>
-                  <option value="coerce_date">Coerce → Date (ISO)</option>
-                  <option value="fill_empty">Fill empties</option>
-                  <option value="split">Split by delimiter</option>
-                  <option value="extract">Extract by RegExp</option>
-                  <option value="delete_col">Delete column</option>
-                  <option value="rename_col">Rename column</option>
-                  <option value="new_col_compute">New column: compute</option>
-                  <option value="merge_cols">Merge columns</option>
-                  <option value="math_col_const">Math: col ± × ÷ const</option>
-                  <option value="math_two_cols">Math: col1 ± × ÷ col2</option>
-                </select>
-              </div>
-              <div id="t-params" className="grid grid-cols-1 gap-2"></div>
-              <div className="flex items-center gap-2">
-                <button id="add-step" className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700" disabled>Add Step</button>
-                <button id="run-pipeline" className="px-3 py-2 rounded-xl bg-slate-800 text-white text-sm hover:bg-slate-900" disabled>Run</button>
-                <label className="flex items-center gap-2 text-xs text-slate-600 ml-auto">
-                  <input id="enable-pipeline" type="checkbox" className="rounded" defaultChecked /> Enable
-                </label>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl shadow p-4">
+          {/* Transform Section */}
+          <div className="mb-4">
+            <h3 className="text-sm font-semibold mb-2">Transform Data with Natural Language</h3>
+            <textarea id="instruction" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm mb-2" rows={3} placeholder="Enter your instruction (e.g., 'Concatenate first name and last name columns')"></textarea>
             <div className="flex items-center gap-2 mb-2">
-              <button id="undo" className="px-2 py-1 rounded bg-slate-100 text-xs">Undo</button>
-              <button id="redo" className="px-2 py-1 rounded bg-slate-100 text-xs">Redo</button>
-              <div className="ml-auto text-xs text-slate-500" id="history-info"></div>
+              <button id="transform-btn" className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-sm hover:bg-emerald-700">Transform Data</button>
+              <button id="undo-backend" className="px-3 py-2 rounded-xl bg-slate-800 text-white text-sm hover:bg-slate-900">Undo</button>
             </div>
-            <h2 className="text-base font-semibold mb-2">Pipeline</h2>
-            <ol id="pipeline" className="space-y-2 text-sm"></ol>
-            <div id="nl-preview-wrap" className="mt-3 hidden">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold">Preview</h3>
-                <div className="flex items-center gap-2">
-                  <button id="apply-preview" className="px-2 py-1 rounded bg-emerald-600 text-white text-xs">Apply Preview</button>
-                  <button id="clear-preview" className="px-2 py-1 rounded bg-slate-100 text-xs">Clear</button>
-                </div>
+            <div id="transform-status" className="text-xs text-slate-600"></div>
+            <div id="followupSection" className="hidden mt-3 p-3 bg-slate-50 rounded-xl">
+              <h4 className="text-sm font-semibold mb-1">Additional Information Needed</h4>
+              <p id="followupMessage" className="text-sm mb-2"></p>
+              <div id="followupQuestions" className="mb-2"></div>
+              <div className="flex items-center gap-2">
+                <button id="followupSubmit" className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs">Submit Responses</button>
+                <button id="followupCancel" className="px-3 py-1.5 rounded bg-slate-300 text-slate-800 text-xs">Cancel</button>
               </div>
-              <ol id="nl-preview" className="space-y-2 text-sm mt-2"></ol>
             </div>
           </div>
-        </section>
 
-        <section className="lg:col-span-3 bg-white rounded-2xl shadow p-4">
+          {/* Chat Section */}
+          <div className="mb-2">
+            <h3 className="text-sm font-semibold mb-2">Chat with AI Assistant</h3>
+            <div className="h-64 overflow-y-auto pr-1 mb-2">
+              <div id="chat-messages" className="flex flex-col"></div>
+            </div>
+            <div className="space-y-2">
+              <textarea id="chat-input" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" rows={3} placeholder="Ask about your data or request transformations..."></textarea>
+              <div className="flex items-center gap-2">
+                <button id="chat-send" className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-sm hover:bg-emerald-700">Send</button>
+                <button id="chat-clear" className="px-3 py-2 rounded-xl bg-slate-200 text-slate-800 text-sm">Clear</button>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <section id="main-section" className="lg:col-span-3 bg-white rounded-2xl shadow p-4">
           <div className="flex items-center gap-3 mb-3">
             <div className="text-sm text-slate-600">Rows: <span id="row-count">0</span></div>
             <div className="ml-auto flex items-center gap-2">
+              <button id="undo" aria-label="Undo" className="px-3 py-2 rounded-lg bg-slate-100 text-sm flex items-center gap-2 opacity-50 cursor-not-allowed" disabled>
+                <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path d="M7.707 3.293a1 1 0 00-1.414 0L1.586 8l4.707 4.707a1 1 0 001.414-1.414L5.414 9H11a4 4 0 010 8h-2a1 1 0 100 2h2a6 6 0 000-12H5.414l2.293-2.293a1 1 0 000-1.414z"/></svg>
+                <span>Undo</span>
+                <span className="badge text-[10px] px-1 rounded bg-slate-200 text-slate-700"></span>
+              </button>
+              <button id="redo" aria-label="Redo" className="px-3 py-2 rounded-lg bg-slate-100 text-sm flex items-center gap-2 opacity-50 cursor-not-allowed" disabled>
+                <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path d="M12.293 3.293a1 1 0 011.414 0L18.414 8l-4.707 4.707a1 1 0 01-1.414-1.414L14.586 9H9a4 4 0 100 8h2a1 1 0 110 2H9a6 6 0 110-12h5.586l-2.293-2.293a1 1 0 010-1.414z"/></svg>
+                <span>Redo</span>
+                <span className="badge text-[10px] px-1 rounded bg-slate-200 text-slate-700"></span>
+              </button>
+              <div className="hidden sm:block text-xs text-slate-500 ml-1" id="history-info"></div>
               <input id="search" className="rounded-xl border border-slate-300 px-3 py-2 text-sm" placeholder="Search rows" />
               <button id="clear-edits" className="px-3 py-2 rounded-lg bg-slate-100 text-slate-800 text-sm hover:bg-slate-200" disabled>Reset to Original</button>
             </div>
           </div>
-          <div id="table-wrap" className="table-wrap max-h-[60vh] border border-slate-200 rounded-xl">
+          <div id="table-wrap" className="table-wrap h-[calc(100vh-240px)] border border-slate-200 rounded-xl">
             <table id="grid" className="w-full text-sm">
               <thead id="thead"></thead>
               <tbody id="tbody"></tbody>
@@ -472,10 +540,19 @@ export default function Prep(){
           </div>
           <div className="flex items-center justify-between mt-3">
             <div className="text-xs text-slate-500" id="paging-info"></div>
-            <div className="flex items-center gap-2">
-              <button id="prev" className="px-3 py-1 rounded-lg bg-slate-100 text-sm" disabled>Prev</button>
-              <input id="page" type="number" className="w-16 text-center rounded-lg border border-slate-300 text-sm px-2 py-1" defaultValue={1} min={1} />
-              <button id="next" className="px-3 py-1 rounded-lg bg-slate-100 text-sm" disabled>Next</button>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <label htmlFor="rowsPerPage" className="text-xs text-slate-500">Rows per page:</label>
+                <select id="rowsPerPage" className="rounded border border-slate-300 text-sm px-2 py-1">
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <button id="prev" className="px-3 py-1 rounded-lg bg-slate-100 text-sm" disabled>Prev</button>
+                <input id="page" type="number" className="w-16 text-center rounded-lg border border-slate-300 text-sm px-2 py-1" defaultValue={1} min={1} />
+                <button id="next" className="px-3 py-1 rounded-lg bg-slate-100 text-sm" disabled>Next</button>
+              </div>
             </div>
           </div>
         </section>

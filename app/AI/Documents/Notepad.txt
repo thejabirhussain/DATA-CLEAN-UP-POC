@@ -1,0 +1,596 @@
+localhost:8000
+=========================================
+
+trim
+Beginner
+
+How do I get rid of the dashes and spaces from the Account Description column? 3.67
+
+I need to clean up my account names. Can you remove the "-" and any spaces from "Cash on Hand - USD"? 7.33s
+
+Help me with a formula to remove special characters from the Account Description column. 5.26s
+
+I want to clean up the Account Description column.  made extra columns
+
+Can you write a query to get rid of the dashes and spaces in my account names? 5.14s
+
+Intermediate
+
+Strip all non-alphanumeric characters from the AccountDescription field for a cleaner output. 4.09s
+
+I need to standardize the AccountDescription column. Please remove the dashes and spaces. 3.91s
+
+Write a script to remove all delimiters from the AccountDescription column. 7.22s
+
+Remove the " - " and spaces from the values in the AccountDescription column. 3.51s
+
+Clean the AccountDescription column by replacing dashes and spaces with nothing. 3.69s
+
+Advanced
+
+Normalize the AccountDescription dimension by stripping all separating characters and whitespace for streamlined data analysis.
+
+Create a transformation that cleanses the AccountDescription by removing all non-alphabetic, non-numeric characters and spaces.
+
+Perform a data-cleansing operation to remove all whitespace and hyphenation from the AccountDescription column.
+
+Write a script to apply a regular expression to the AccountDescription field, retaining only alphanumeric characters.
+
+Standardize the AccountDescription field by eliminating all non-alphanumeric characters for master data management purposes.
+
+trimcolumns
+Beginner
+
+How can I get rid of the word "Name" from my column titles like "Ledger Name"? 3.19s
+
+I want to change the column name from "Ledger Name" to just "Ledger." 3.44s
+
+Can you help me get rid of "Name" at the end of some of my column headers? 4.77s
+
+I need to clean up my column names. Can you remove the extra words? removed all special characters 20s
+
+How do I change the column header "Ledger Name" to be simpler? 3.27s
+
+Intermediate
+
+Standardize the column headers by removing the redundant "Name" suffix from all relevant columns. 5.14s
+
+Create a script to rename columns, dropping the "Name" suffix from Ledger Name and similar headers. 6.10s
+
+I need a query to remove the _Name portion from my column names for better readability. removed _Name and not Name
+
+Cleanse column headers by removing the word "Name" where it appears at the end of a header string. 5.09s
+
+Rename Ledger Name to Ledger to simplify the column header. 3.68s
+
+Advanced
+
+Develop a script to standardize metadata by automatically stripping common suffixes like "Name" from column headers for reporting consistency.
+
+Implement a dynamic schema transformation to remove redundant designators from all column headers.
+
+Write a query to programmatically normalize column names by removing the "Name" suffix where present.
+
+Apply a schema change to cleanse column headers by removing the 'Name' string for improved BI tool compatibility.
+
+Automate the process of renaming all headers that end with "Name" to remove the suffix.
+
+trimall
+Beginner
+
+Remove all the hyphens from all the text in my spreadsheet?
+
+I want to get rid of all the dashes everywhere in my data.
+
+I have hyphens in many different text columns. How can I get rid of all of them at once?
+
+Can you help me clean up all my text fields by removing all the "-" characters?
+
+I need to clean my data and remove all hyphens. Is there a way to do that for every column?
+
+Intermediate
+
+Apply a text replacement function to all string fields to remove any hyphen characters.
+
+Create a script to globally remove all hyphens from any text column in the dataset.
+
+Write a query to strip the hyphen character from all string-based columns for data cleansing.
+
+Normalize the entire dataset by removing all instances of the "-" character from every text cell.
+
+I need a query that will find and replace all hyphens with nothing in all string fields.
+
+Advanced
+
+Implement a global data transformation process to strip all separator characters like hyphens from every string field for data integrity.
+
+Develop a cleansing script to eliminate all occurrences of the hyphen character from all text columns across the entire dataset for reporting standardization.
+
+Write a script to apply a regular expression that removes all hyphens from all string fields.
+
+Execute a data cleansing operation to remove all hyphens from all text columns as part of a data normalization routine.
+
+Perform a systematic sweep of the entire dataset to remove all instances of the hyphen character from all string columns.
+
+trimcells
+Beginner
+
+I need to remove "Ltd." and "Inc." from company names in the Legal Entity column.
+
+How do I make the company names in the Legal Entity column cleaner by getting rid of "Ltd." and "Inc."?
+
+I want to get rid of the legal endings like "Ltd." and "Inc." from the company names.
+
+Can you help me clean up the Legal Entity column?
+
+Help me with a formula to remove the legal suffixes from the company names.
+
+Intermediate
+
+Write a query to standardize the Legal Entity column by stripping legal designators like "Ltd." and "Inc.".
+
+I need a script to remove the suffixes "Ltd." and "Inc." from the values in the Legal Entity column.
+
+Cleanse the Legal Entity column by removing the common company suffixes to simplify the names.
+
+Create a transformation to remove . and Inc from the Legal Entity column.
+
+Normalize the company names in the Legal Entity column by removing legal endings.
+
+Advanced
+
+Develop a script to normalize company names by removing legal designators and suffixes for improved consolidation mapping.
+
+Perform a data-cleansing operation on the Legal Entity field to remove all legal abbreviations for improved consolidation and reporting.
+
+Write a script to apply a text transformation to the Legal Entity column, removing all legal suffixes for master data management.
+
+Standardize the Legal Entity dimension by stripping all common entity designators for consolidation purposes.
+
+Implement a data normalization routine to remove all legal suffixes like "Ltd." and "Inc." from the Legal Entity column for seamless mapping.
+
+changecase
+Beginner
+
+How do I make all the words in the Account Type column capitalized?
+
+I need to change all the values in the Account Type column to be in all caps.
+
+Can you help me make the Account Type column values uppercase?
+
+I want to make sure the Account Type column has all capital letters.
+
+Write a formula to change the case of the Account Type column to uppercase.
+
+Intermediate
+
+I need to standardize the AccountType column by converting all values to uppercase.
+
+Apply an uppercase function to the AccountType column to ensure consistency.
+
+Write a query to convert all values in the AccountType field to all capital letters.
+
+Transform the AccountType column to an uppercase format.
+
+Change the case of the AccountType column to uppercase for reporting consistency.
+
+Advanced
+
+Perform a data standardization operation by converting the AccountType field to uppercase to align with GAAP reporting format.
+
+Apply a transformation to the AccountType dimension to ensure all entries are in a uniform uppercase format for data integrity.
+
+Write a script to enforce a consistent uppercase format for all values within the AccountType column as part of a data governance policy.
+
+Normalize the AccountType classification by converting all values to uppercase for streamlined chart of accounts management.
+
+Ensure data quality by converting all values in the AccountType column to uppercase for master data management.
+
+sort
+Beginner
+
+How do I sort my data by the Net Amount from the biggest number to the smallest?
+
+I want to organize my rows so the highest Net Amount is at the top.
+
+Can you sort this table for me based on the Net Amount column?
+
+Help me sort the data by the Net Amount column.
+
+I need to order my data by Net Amount from highest to lowest.
+
+Intermediate
+
+Order the records by the Net Amount column in descending order.
+
+Sort the dataset by Net Amount to find the largest values first.
+
+I need a query to sort the table by the Net Amount field in descending order.
+
+Arrange the rows of the table in descending order based on the Net Amount column.
+
+Create a sorted view of the data, ordered by the Net Amount from highest to lowest.
+
+Advanced
+
+Order the dataset by Net Amount in descending order to prioritize high-materiality transactions for audit sampling.
+
+Sort the data by the Net Amount in descending order to identify the most significant financial transactions.
+
+Write a query to order the data by Net Amount in descending order for a materiality-based analysis.
+
+I need a query that sorts the data by the Net Amount in descending order to facilitate a high-risk transaction review.
+
+Arrange the dataset by Net Amount in descending order to highlight high-value entries for financial reporting.
+
+concatenate
+Beginner
+
+How do I put the Account Code and Account Description into one column?
+
+I want to combine the Account Code and Account Description columns.
+
+Can you help me join the text from the Account Code and Account Description columns?
+
+I need a new column that combines the Account Code and Account Description values.
+
+How do I make a single column from the Account Code and Account Description columns?
+
+Intermediate
+
+Create a new column by concatenating the Account Code and Account Description fields.
+
+I need a query to merge the Account Code and Account Description columns into one.
+
+Combine the Account Code and Account Description columns into a single field.
+
+Write a script to concatenate the Account Code and Account Description fields.
+
+Create a combined field from the Account Code and Account Description columns.
+
+Advanced
+
+Generate a unique GL account master key by concatenating the Account Code and Account Description for streamlined mapping.
+
+Create a composite key by concatenating the Account Code and Account Description fields for master data management.
+
+Write a query to create a GL account master key by combining the Account Code and Account Description fields.
+
+Develop a transformation to create a GL master key by concatenating the Account Code and Account Description for data mapping.
+
+Build a unique identifier by combining the Account Code and Account Description for enhanced data lineage and reporting.
+
+sum
+Beginner
+
+How do I add up all the numbers in the Net Amount column?
+
+I need to find the total of all the Net Amount values.
+
+Can you calculate the total for the Net Amount column?
+
+Help me find the sum of all the values in the Net Amount column.
+
+What's the total of all the numbers in the Net Amount column?
+
+Intermediate
+
+Write a query to calculate the aggregate sum of the Net Amount column.
+
+I need to get the total sum of all values in the Net Amount field.
+
+Calculate the sum of all records in the Net Amount column.
+
+Find the grand total of the Net Amount field.
+
+Aggregate the values in the Net Amount column to get a single total.
+
+Advanced
+
+Compute the aggregate trial balance footings by summing the Net Amount column for balance sheet reconciliation.
+
+Calculate the total Net Amount to verify the financial statement balance.
+
+Perform an aggregation of the Net Amount column to compute the total for financial reporting.
+
+Write a query to calculate the footing of the Net Amount column for reconciliation purposes.
+
+Sum the Net Amount column to calculate the total balance for financial reporting.
+
+multiply
+Beginner
+
+How do I multiply all the Debit amounts by 1.1 to add a 10% markup?
+
+I need to add 10% to all the numbers in the Debit column.
+
+Can you help me multiply the Debit column values by 1.1?
+
+I want to increase all the numbers in the Debit column by 10%.
+
+How do I calculate a new Debit amount that is 10% higher than the original?
+
+Intermediate
+
+Create a new calculated field by multiplying the Debit column values by 1.1.
+
+Apply a 10% markup to all values in the Debit column.
+
+Write a query to multiply the Debit field by 1.1.
+
+I need to increase the Debit amount by a factor of 1.1.
+
+Perform a multiplication operation on the Debit column to apply a 10% increase.
+
+Advanced
+
+Apply a revaluation factor of 1.1 to the USD denominated Debit balances.
+
+Compute a revalued Debit amount by multiplying the original value by 1.1 for financial reporting purposes.
+
+Write a query to apply a revaluation factor of 1.1 to all values in the Debit column.
+
+Perform a currency revaluation by applying a factor of 1.1 to the Debit column.
+
+Recalculate the Debit column by multiplying each value by 1.1 to adjust for currency fluctuation.
+
+median
+Beginner
+
+How do I find the middle number (median) for Net Amount for each company?
+
+I need to calculate the median Net Amount for each Legal Entity.
+
+Can you help me find the median Net Amount for each Legal Entity?
+
+Help me get the median value of Net Amount for each company name.
+
+I want to see the median Net Amount for each Legal Entity.
+
+Intermediate
+
+Calculate the median of the Net Amount column, grouped by Legal Entity.
+
+I need a query to find the median Net Amount for each unique Legal Entity.
+
+Find the median value for the Net Amount field, partitioned by Legal Entity.
+
+Compute the median Net Amount for each distinct Legal Entity group.
+
+Get the median Net Amount for each Legal Entity using a grouped aggregation.
+
+Advanced
+
+Calculate the median account balance by reporting entity for detailed variance analysis.
+
+Write a query to compute the median Net Amount for each Legal Entity for financial analysis.
+
+Determine the median Net Amount per subsidiary to assess typical transaction sizes.
+
+Compute the median Net Amount by Legal Entity to identify the central tendency of account balances.
+
+Find the median Net Amount by Legal Entity to inform budget variance analysis.
+
+pivot
+Beginner
+
+How do I make a table that shows Legal Entity vs. Account Type with the total Net Amount?
+
+I want to create a pivot table with Legal Entity on one side and Account Type on the other, showing the Net Amount totals.
+
+Can you help me make a pivot table that summarizes the Net Amount by Legal Entity and Account Type?
+
+I need to summarize my data to see Net Amount totals for each Legal Entity and Account Type.
+
+Help me build a summary table with rows for Legal Entity, columns for Account Type, and Net Amount as the values.
+
+Intermediate
+
+Create a pivot table with Legal Entity as rows, Account Type as columns, and the sum of Net Amount as values.
+
+I need a query to pivot the data, aggregating Net Amount by Legal Entity and Account Type.
+
+Write a script to generate a summary table with Legal Entity and Account Type as dimensions and Net Amount as the measure.
+
+Pivot the dataset to show the sum of Net Amount for each combination of Legal Entity and Account Type.
+
+Create a cross-tabulation table to summarize Net Amount by Legal Entity and Account Type.
+
+Advanced
+
+Generate a consolidation matrix by entity and account classification for streamlined financial reporting.
+
+Create a pivot table for financial analysis, showing the sum of Net Amount by Legal Entity and Account Type.
+
+Develop a script to produce a consolidation report by pivoting on Legal Entity and Account Type, with Net Amount as the aggregated value.
+
+I need a query to generate a matrix view of Net Amount by Legal Entity and Account Type for intercompany reconciliation.
+
+Create a pivot table that shows the total Net Amount for each Legal Entity and Account Type for financial statement preparation.
+
+average
+Beginner
+
+How do I find the average of Net Amount for each Department?
+
+I need to calculate the average Net Amount for each Department.
+
+Can you help me find the average Net Amount per Department?
+
+Help me get the average value of Net Amount for each Department.
+
+I want to see the average Net Amount for each Department.
+
+Intermediate
+
+Calculate the average of the Net Amount column, grouped by Department.
+
+I need a query to find the average Net Amount for each unique Department.
+
+Find the mean value for the Net Amount field, partitioned by Department.
+
+Compute the average Net Amount for each distinct Department group.
+
+Get the average Net Amount for each Department using a grouped aggregation.
+
+Advanced
+
+Compute the mean account balance by cost center for budget variance analysis.
+
+Write a query to calculate the average Net Amount by Department to understand typical spending.
+
+Determine the average Net Amount per Department for financial analysis and performance review.
+
+Compute the average Net Amount by Department to identify spending trends.
+
+Find the mean Net Amount by Department for budget forecasting and analysis.
+
+min
+Beginner
+
+How do I find the smallest Net Amount for each Cost Center?
+
+I need to find the lowest Net Amount for each Cost Center.
+
+Can you help me find the minimum Net Amount per Cost Center?
+
+Help me get the smallest value of Net Amount for each Cost Center.
+
+I want to see the minimum Net Amount for each Cost Center.
+
+Intermediate
+
+Find the minimum value of the Net Amount column, grouped by Cost Center.
+
+I need a query to find the lowest Net Amount for each unique Cost Center.
+
+Find the minimum Net Amount for each Cost Center using a grouped aggregation.
+
+Compute the minimum Net Amount for each distinct Cost Center group.
+
+Get the minimum Net Amount for each Cost Center.
+
+Advanced
+
+Identify the lowest balance by responsibility center for cash flow planning.
+
+Write a query to compute the minimum Net Amount for each Cost Center to identify the smallest transactions.
+
+Determine the minimum Net Amount per Cost Center to assess minimum spending levels.
+
+Compute the lowest Net Amount by Cost Center to find minimum transaction values.
+
+Find the minimum Net Amount by Cost Center to identify baseline spending.
+
+max
+Beginner
+
+How do I find the biggest Debit amount for each company?
+
+I need to find the highest Debit amount for each Legal Entity.
+
+Can you help me find the maximum Debit amount per Legal Entity?
+
+Help me get the largest value of Debit for each company name.
+
+I want to see the maximum Debit amount for each Legal Entity.
+
+Intermediate
+
+Find the maximum value of the Debit column, grouped by Legal Entity.
+
+I need a query to find the highest Debit amount for each unique Legal Entity.
+
+Find the maximum Debit for each Legal Entity using a grouped aggregation.
+
+Compute the maximum Debit amount for each distinct Legal Entity group.
+
+Get the maximum Debit amount for each Legal Entity.
+
+Advanced
+
+Determine the peak debit exposure by subsidiary for credit risk assessment.
+
+Write a query to compute the maximum Debit amount for each Legal Entity for financial risk analysis.
+
+Find the maximum Debit amount per Legal Entity to assess the largest single debit transaction.
+
+Compute the highest Debit amount by Legal Entity to identify the largest transactions.
+
+Find the maximum Debit amount by Legal Entity to assess potential high-value transactions.
+
+count
+Beginner
+
+How do I count how many records there are for each Account Type?
+
+I need to know how many entries I have for each type of account.
+
+Can you help me count the number of records per Account Type?
+
+Help me count the number of rows for each Account Type.
+
+I want to see how many times each Account Type appears in the data.
+
+Intermediate
+
+Count the number of rows in the table, grouped by Account Type.
+
+I need a query to count the number of records for each unique Account Type.
+
+Find the count of records for each Account Type using a grouped aggregation.
+
+Compute the number of records for each distinct Account Type group.
+
+Get a count of Account Type occurrences.
+
+Advanced
+
+Enumerate the GL entries by account classification for SOX testing scope.
+
+Write a query to count the number of records for each Account Type to determine the frequency of each classification.
+
+Determine the total number of transactions per Account Type for auditing purposes.
+
+Compute the count of records by Account Type to analyze transaction volume.
+
+Find the total number of Account Type occurrences to understand data distribution.
+
+split
+Beginner
+
+How do I split the Period Name column into two new columns, one for Month and one for Year?
+
+I want to separate the Period Name column into Month and Year.
+
+Can you help me break up the Period Name column into Month and Year?
+
+I need to split my Period Name column.
+
+Help me with a formula to get the month and year from the Period Name column.
+
+Intermediate
+
+Create two new columns, Month and Year, by splitting the Period Name field.
+
+I need a query to parse the Period Name column and extract the Month and Year.
+
+Split the Period Name field by a delimiter to get the month and year.
+
+Write a script to separate the values in the Period Name column into two new fields.
+
+Extract the Month and Year from the Period Name column into separate columns.
+
+Advanced
+
+Parse the fiscal period identifier into discrete temporal dimensions for time series analysis.
+
+Write a query to split the Period Name into separate Month and Year columns for time-based reporting.
+
+Implement a data transformation to extract Month and Year from the Period Name column to enable time series analysis.
+
+Normalize the Period Name field by parsing it into distinct Month and Year columns for improved data granularity.
+
+Deconstruct the Period Name column into Month and Year fields for detailed temporal analysis.
+
+

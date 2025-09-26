@@ -17,7 +17,7 @@ export default function Home(){
     let EDITED = []
     let COLUMNS = []
     let PIPELINE = []
-    const PAGE_SIZE = 50
+    let PAGE_SIZE = 50
     let CURRENT_PAGE = 1
     let parquetReady = false
 
@@ -102,6 +102,7 @@ export default function Home(){
     const nextBtn = $("next")
     const searchInput = $("search")
     const clearEditsBtn = $("clear-edits")
+    const rowsPerPageEl = $("rowsPerPage")
 
     const readinessList = $("readiness-list")
 
@@ -318,6 +319,7 @@ export default function Home(){
     prevBtn.addEventListener('click', () => { CURRENT_PAGE = Math.max(1, CURRENT_PAGE - 1); renderTable() })
     nextBtn.addEventListener('click', () => { CURRENT_PAGE += 1; renderTable() })
     pageInput.addEventListener('change', () => { CURRENT_PAGE = Math.max(1, parseInt(pageInput.value||'1',10)); renderTable() })
+    if (rowsPerPageEl) rowsPerPageEl.addEventListener('change', () => { PAGE_SIZE = parseInt(rowsPerPageEl.value,10) || 50; CURRENT_PAGE = 1; renderTable() })
 
     // Transform params
     tOp.addEventListener('change', renderParams)
@@ -603,10 +605,19 @@ export default function Home(){
           </div>
           <div className="flex items-center justify-between mt-3">
             <div className="text-xs text-slate-500" id="paging-info"></div>
-            <div className="flex items-center gap-2">
-              <button id="prev" className="px-3 py-1 rounded-lg bg-slate-100 text-sm" disabled>Prev</button>
-              <input id="page" type="number" className="w-16 text-center rounded-lg border border-slate-300 text-sm px-2 py-1" defaultValue={1} min={1} />
-              <button id="next" className="px-3 py-1 rounded-lg bg-slate-100 text-sm" disabled>Next</button>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <label htmlFor="rowsPerPage" className="text-xs text-slate-500">Rows per page:</label>
+                <select id="rowsPerPage" className="rounded border border-slate-300 text-sm px-2 py-1">
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <button id="prev" className="px-3 py-1 rounded-lg bg-slate-100 text-sm" disabled>Prev</button>
+                <input id="page" type="number" className="w-16 text-center rounded-lg border border-slate-300 text-sm px-2 py-1" defaultValue={1} min={1} />
+                <button id="next" className="px-3 py-1 rounded-lg bg-slate-100 text-sm" disabled>Next</button>
+              </div>
             </div>
           </div>
         </section>

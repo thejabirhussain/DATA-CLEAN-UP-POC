@@ -238,7 +238,7 @@ async def clear_chat_history():
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
-    with open("static/index.html", "r", encoding="utf-8") as f:
+    with open("static/index-react.html", "r", encoding="utf-8") as f:
         return HTMLResponse(content=f.read())
 
 

@@ -71,7 +71,7 @@ export default function Prep(){
     const fileInput = $("file-input"); const pickBtn = $("pick-file"); const dropzone = $("dropzone"); const fileNameEl = $("file-name")
     const exportCSVBtn = $("export-csv"); const exportXLSXBtn = $("export-xlsx"); const exportJSONBtn = $("export-json"); const exportParquetBtn = $("export-parquet"); const saveRecipeBtn = $("save-recipe"); const loadRecipeBtn = $("load-recipe"); const recipeInput = $("recipe-input")
     const undoBtn = $("undo"); const redoBtn = $("redo"); const historyInfo = $("history-info")
-    const chatSidebar = $("chat-sidebar"); const chatMessages = $("chat-messages"); const chatInput = $("chat-input"); const chatSend = $("chat-send"); const chatClear = $("chat-clear"); const mainSection = $("main-section")
+    const chatSidebar = $("chat-sidebar"); const chatMessages = $("chat-messages"); const chatInput = $("chat-input"); const chatSend = $("chat-send"); const chatClear = $("chat-clear"); const mainSection = $("main-section"); const sidebarToggle = $("sidebar-toggle")
     // Transform DOM (mirroring demo.jsx)
     const instructionEl = $("instruction"); const transformBtn = $("transform-btn"); const undoBackendBtn = $("undo-backend"); const transformStatusEl = $("transform-status")
     const followupSection = $("followupSection"); const followupMsgEl = $("followupMessage"); const followupQsEl = $("followupQuestions"); const followupSubmitBtn = $("followupSubmit"); const followupCancelBtn = $("followupCancel")
@@ -211,7 +211,7 @@ export default function Prep(){
     async function transformData(){
       const text = (instructionEl?.value || '').trim()
       if (!text){ setTransformStatus('Please enter an instruction', 'error'); return }
-      const startTime = performance.now(); transformLoading = true
+      const startTime = performance.now(); transformLoading = true; if (transformBtn){ transformBtn.disabled = true; transformBtn.textContent = 'Transforming…'; transformBtn.classList.add('opacity-70') }
       try{
         const body = { instruction: text }
         if (sessionId) body.session_id = sessionId
@@ -255,7 +255,7 @@ export default function Prep(){
           setTransformStatus(`Transformation failed: ${result.error}`, 'error'); sessionId = null; if (followupSection){ followupSection.classList.add('hidden') }
         }
       } catch(e){ setTransformStatus(`Transform error: ${e.message}`, 'error'); sessionId = null; if (followupSection){ followupSection.classList.add('hidden') } }
-      finally{ transformLoading = false }
+      finally{ transformLoading = false; if (transformBtn){ transformBtn.disabled = false; transformBtn.textContent = 'Transform Data'; transformBtn.classList.remove('opacity-70') } }
     }
 
     async function undoBackend(){
@@ -323,7 +323,23 @@ export default function Prep(){
     nextBtn.addEventListener('click', async () => { const totalPages = Math.max(1, Math.ceil(TOTAL_ROWS / PAGE_SIZE)); if (CURRENT_PAGE < totalPages) await loadDataPage(CURRENT_PAGE + 1) })
     pageInput.addEventListener('change', async () => { const totalPages = Math.max(1, Math.ceil(TOTAL_ROWS / PAGE_SIZE)); const p = Math.max(1, Math.min(totalPages, parseInt(pageInput.value||'1',10))); await loadDataPage(p) })
 
-    // Sidebar always visible; no toggle behavior
+    // Sidebar toggle behavior: flex row, sidebar width animates to 0 without vertical reflow
+    function setSidebar(open){
+      if (!chatSidebar || !mainSection) return
+      if (open){
+        chatSidebar.classList.remove('w-0','opacity-0','-translate-x-3','pointer-events-none')
+        chatSidebar.classList.add('w-[360px]')
+        if (sidebarToggle) sidebarToggle.textContent = 'Close Menu'
+      } else {
+        chatSidebar.classList.remove('w-[360px]')
+        chatSidebar.classList.add('w-0','opacity-0','-translate-x-3','pointer-events-none')
+        if (sidebarToggle) sidebarToggle.textContent = 'Open Menu'
+      }
+      if (sidebarToggle) sidebarToggle.setAttribute('aria-expanded', String(open))
+    }
+    let sidebarOpen = true
+    setSidebar(sidebarOpen)
+    if (sidebarToggle) sidebarToggle.addEventListener('click', () => { sidebarOpen = !sidebarOpen; setSidebar(sidebarOpen) })
 
     if (undoBtn) undoBtn.addEventListener('click', async () => { if (canUndo()) { undo() } else { await apiUndo() } })
     if (redoBtn) redoBtn.addEventListener('click', redo)
@@ -358,6 +374,8 @@ export default function Prep(){
       if (!chatInput) return
       const message = (chatInput.value||'').trim(); if (!message) return
       addChatMessage('user', message); chatInput.value = ''
+      const prevLabel = chatSend ? chatSend.textContent : ''
+      if (chatSend){ chatSend.disabled = true; chatSend.textContent = 'Sending…'; chatSend.classList.add('opacity-70') }
       try{
         const resp = await fetch(`${API_BASE}/chat`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ message }) })
         const result = await resp.json()
@@ -366,6 +384,7 @@ export default function Prep(){
           if (result.dataframe_updated){ pushHistory(); await loadDataPage(1) }
         } else { addChatMessage('assistant', `Sorry, I encountered an error: ${result.error}`) }
       } catch(e){ addChatMessage('assistant', `Sorry, I'm having connection issues: ${e.message}`) }
+      finally{ if (chatSend){ chatSend.disabled = false; chatSend.textContent = prevLabel || 'Send'; chatSend.classList.remove('opacity-70') } }
     }
     if (chatSend) chatSend.addEventListener('click', sendChat)
     if (chatInput) chatInput.addEventListener('keydown', (e) => { if (e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendChat() } })
@@ -471,52 +490,53 @@ export default function Prep(){
         </div>
       </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* Collapsible Sidebar: Transform + Chat */}
-        <aside id="chat-sidebar" className="lg:col-span-1 bg-white rounded-2xl shadow p-4">
-          <div className="flex items-center mb-3">
-            <h2 className="text-base font-semibold">AI Assistant</h2>
-          </div>
-          {/* Transform Section */}
-          <div className="mb-4">
-            <h3 className="text-sm font-semibold mb-2">Transform Data with Natural Language</h3>
-            <textarea id="instruction" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm mb-2" rows={3} placeholder="Enter your instruction (e.g., 'Concatenate first name and last name columns')"></textarea>
-            <div className="flex items-center gap-2 mb-2">
-              <button id="transform-btn" className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-sm hover:bg-emerald-700">Transform Data</button>
-              <button id="undo-backend" className="px-3 py-2 rounded-xl bg-slate-800 text-white text-sm hover:bg-slate-900">Undo</button>
-            </div>
-            <div id="transform-status" className="text-xs text-slate-600"></div>
-            <div id="followupSection" className="hidden mt-3 p-3 bg-slate-50 rounded-xl">
-              <h4 className="text-sm font-semibold mb-1">Additional Information Needed</h4>
-              <p id="followupMessage" className="text-sm mb-2"></p>
-              <div id="followupQuestions" className="mb-2"></div>
-              <div className="flex items-center gap-2">
-                <button id="followupSubmit" className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs">Submit Responses</button>
-                <button id="followupCancel" className="px-3 py-1.5 rounded bg-slate-300 text-slate-800 text-xs">Cancel</button>
+      <div className="flex gap-6 items-start">
+        {/* Collapsible Sidebar: Transform + Chat as separate cards */}
+        <aside id="chat-sidebar" className="transform transition-[width,opacity,transform] duration-300 bg-transparent w-[360px] overflow-hidden">
+          <div className="space-y-4">
+            <div className="bg-white rounded-2xl shadow p-4">
+              <div className="flex items-center mb-2">
+                <h2 className="text-base font-semibold">AI Assistant</h2>
+              </div>
+              <h3 className="text-sm font-semibold mb-2">Transform Data with Natural Language</h3>
+              <textarea id="instruction" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm mb-2" rows={3} placeholder="Enter your instruction (e.g., 'Concatenate first name and last name columns')"></textarea>
+              <div className="flex items-center gap-2 mb-2">
+                <button id="transform-btn" className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-sm hover:bg-emerald-700">Transform Data</button>
+                <button id="undo-backend" className="px-3 py-2 rounded-xl bg-slate-800 text-white text-sm hover:bg-slate-900">Undo</button>
+              </div>
+              <div id="transform-status" className="text-xs text-slate-600"></div>
+              <div id="followupSection" className="hidden mt-3 p-3 bg-slate-50 rounded-xl">
+                <h4 className="text-sm font-semibold mb-1">Additional Information Needed</h4>
+                <p id="followupMessage" className="text-sm mb-2"></p>
+                <div id="followupQuestions" className="mb-2"></div>
+                <div className="flex items-center gap-2">
+                  <button id="followupSubmit" className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs">Submit Responses</button>
+                  <button id="followupCancel" className="px-3 py-1.5 rounded bg-slate-300 text-slate-800 text-xs">Cancel</button>
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* Chat Section */}
-          <div className="mb-2">
-            <h3 className="text-sm font-semibold mb-2">Chat with AI Assistant</h3>
-            <div className="h-64 overflow-y-auto pr-1 mb-2">
-              <div id="chat-messages" className="flex flex-col"></div>
-            </div>
-            <div className="space-y-2">
-              <textarea id="chat-input" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" rows={3} placeholder="Ask about your data or request transformations..."></textarea>
-              <div className="flex items-center gap-2">
-                <button id="chat-send" className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-sm hover:bg-emerald-700">Send</button>
-                <button id="chat-clear" className="px-3 py-2 rounded-xl bg-slate-200 text-slate-800 text-sm">Clear</button>
+            <div className="bg-white rounded-2xl shadow p-4">
+              <h3 className="text-sm font-semibold mb-2">Chat with AI Assistant</h3>
+              <div className="h-64 overflow-y-auto pr-1 mb-2">
+                <div id="chat-messages" className="flex flex-col"></div>
+              </div>
+              <div className="space-y-2">
+                <textarea id="chat-input" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" rows={3} placeholder="Ask about your data or request transformations..."></textarea>
+                <div className="flex items-center gap-2">
+                  <button id="chat-send" className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-sm hover:bg-emerald-700">Send</button>
+                  <button id="chat-clear" className="px-3 py-2 rounded-xl bg-slate-200 text-slate-800 text-sm">Clear</button>
+                </div>
               </div>
             </div>
           </div>
         </aside>
 
-        <section id="main-section" className="lg:col-span-3 bg-white rounded-2xl shadow p-4">
+        <section id="main-section" className="flex-1 min-w-0 bg-white rounded-2xl shadow p-4">
           <div className="flex items-center gap-3 mb-3">
             <div className="text-sm text-slate-600">Rows: <span id="row-count">0</span></div>
             <div className="ml-auto flex items-center gap-2">
+              <button id="sidebar-toggle" className="px-3 py-2 rounded-lg bg-slate-100 text-sm">Close Menu</button>
               <button id="undo" aria-label="Undo" className="px-3 py-2 rounded-lg bg-slate-100 text-sm flex items-center gap-2 opacity-50 cursor-not-allowed" disabled>
                 <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path d="M7.707 3.293a1 1 0 00-1.414 0L1.586 8l4.707 4.707a1 1 0 001.414-1.414L5.414 9H11a4 4 0 010 8h-2a1 1 0 100 2h2a6 6 0 000-12H5.414l2.293-2.293a1 1 0 000-1.414z"/></svg>
                 <span>Undo</span>

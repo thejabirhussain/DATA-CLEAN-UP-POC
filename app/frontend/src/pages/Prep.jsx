@@ -71,7 +71,7 @@ export default function Prep(){
     const fileInput = $("file-input"); const pickBtn = $("pick-file"); const dropzone = $("dropzone"); const fileNameEl = $("file-name")
     const exportCSVBtn = $("export-csv"); const exportXLSXBtn = $("export-xlsx"); const exportJSONBtn = $("export-json"); const exportParquetBtn = $("export-parquet"); const saveRecipeBtn = $("save-recipe"); const loadRecipeBtn = $("load-recipe"); const recipeInput = $("recipe-input")
     const undoBtn = $("undo"); const redoBtn = $("redo"); const historyInfo = $("history-info")
-    const chatSidebar = $("chat-sidebar"); const chatMessages = $("chat-messages"); const chatInput = $("chat-input"); const chatSend = $("chat-send"); const chatClear = $("chat-clear"); const mainSection = $("main-section"); const sidebarToggle = $("sidebar-toggle")
+    const chatSidebar = $("chat-sidebar"); const chatMessages = $("chat-messages"); const chatInput = $("chat-input"); const chatSend = $("chat-send"); const chatClear = $("chat-clear"); const mainSection = $("main-section"); const sidebarToggle = $("sidebar-toggle"); const llmSelect = $("llm-select"); const llmActiveLabel = $("llm-active")
     // Transform DOM (mirroring demo.jsx)
     const instructionEl = $("instruction"); const transformBtn = $("transform-btn"); const undoBackendBtn = $("undo-backend"); const transformStatusEl = $("transform-status")
     const followupSection = $("followupSection"); const followupMsgEl = $("followupMessage"); const followupQsEl = $("followupQuestions"); const followupSubmitBtn = $("followupSubmit"); const followupCancelBtn = $("followupCancel")
@@ -81,6 +81,13 @@ export default function Prep(){
 
     // Chat state
     let MESSAGES = []
+    let selectedLLM = 'Gemini'
+    // initialize LLM selector UI
+    if (llmSelect){
+      llmSelect.value = selectedLLM
+      llmSelect.addEventListener('change', () => { selectedLLM = llmSelect.value || 'Gemini'; if (llmActiveLabel) llmActiveLabel.textContent = selectedLLM })
+    }
+    if (llmActiveLabel) llmActiveLabel.textContent = selectedLLM
     // Transform state
     let transformLoading = false
     let sessionId = null
@@ -377,7 +384,7 @@ export default function Prep(){
       const prevLabel = chatSend ? chatSend.textContent : ''
       if (chatSend){ chatSend.disabled = true; chatSend.textContent = 'Sending…'; chatSend.classList.add('opacity-70') }
       try{
-        const resp = await fetch(`${API_BASE}/chat`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ message }) })
+        const resp = await fetch(`${API_BASE}/chat`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ message, model: selectedLLM }) })
         const result = await resp.json()
         if (result.success){
           addChatMessage('assistant', result.message)
@@ -517,7 +524,20 @@ export default function Prep(){
             </div>
 
             <div className="bg-white rounded-2xl shadow p-4">
-              <h3 className="text-sm font-semibold mb-2">Chat with AI Assistant</h3>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold">Chat with AI Assistant</h3>
+                <div className="flex items-center gap-2">
+                  <label htmlFor="llm-select" className="text-xs text-slate-600">Model</label>
+                  <select id="llm-select" className="rounded border border-slate-300 text-xs px-2 py-1">
+                    <option value="Gemini">Gemini</option>
+                    <option value="GPT-4">GPT-4</option>
+                    <option value="Claude">Claude</option>
+                    <option value="Llama">Llama</option>
+                    <option value="Custom Model">Custom Model</option>
+                  </select>
+                </div>
+              </div>
+              <div className="text-[11px] text-slate-500 mb-2">Active: <span id="llm-active" className="font-medium">Gemini</span></div>
               <div className="h-64 overflow-y-auto pr-1 mb-2">
                 <div id="chat-messages" className="flex flex-col"></div>
               </div>

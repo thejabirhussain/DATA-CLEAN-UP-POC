@@ -103,6 +103,10 @@ export default function Home(){
     const searchInput = $("search")
     const clearEditsBtn = $("clear-edits")
     const rowsPerPageEl = $("rowsPerPage")
+    // Sidebar toggle DOM (match Prep.jsx pattern)
+    const homeSidebar = $("home-sidebar")
+    const mainSection = $("main-section")
+    const sidebarToggle = $("sidebar-toggle")
 
     const readinessList = $("readiness-list")
 
@@ -321,6 +325,24 @@ export default function Home(){
     pageInput.addEventListener('change', () => { CURRENT_PAGE = Math.max(1, parseInt(pageInput.value||'1',10)); renderTable() })
     if (rowsPerPageEl) rowsPerPageEl.addEventListener('change', () => { PAGE_SIZE = parseInt(rowsPerPageEl.value,10) || 50; CURRENT_PAGE = 1; renderTable() })
 
+    // Sidebar toggle behavior (flex row). Sidebar slides to width 0 without vertical reflow.
+    function setSidebar(open){
+      if (!homeSidebar || !mainSection) return
+      if (open){
+        homeSidebar.classList.remove('w-0','opacity-0','-translate-x-3','pointer-events-none')
+        homeSidebar.classList.add('w-[360px]')
+        if (sidebarToggle) sidebarToggle.textContent = 'Close Menu'
+      } else {
+        homeSidebar.classList.remove('w-[360px]')
+        homeSidebar.classList.add('w-0','opacity-0','-translate-x-3','pointer-events-none')
+        if (sidebarToggle) sidebarToggle.textContent = 'Open Menu'
+      }
+      if (sidebarToggle) sidebarToggle.setAttribute('aria-expanded', String(open))
+    }
+    let sidebarOpen = true
+    setSidebar(sidebarOpen)
+    if (sidebarToggle) sidebarToggle.addEventListener('click', () => { sidebarOpen = !sidebarOpen; setSidebar(sidebarOpen) })
+
     // Transform params
     tOp.addEventListener('change', renderParams)
 
@@ -525,8 +547,9 @@ export default function Home(){
         </div>
       </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        <section className="lg:col-span-1 space-y-6">
+      <div className="flex gap-6 items-start">
+        <aside id="home-sidebar" className="transform transition-[width,opacity,transform] duration-300 bg-transparent w-[360px] overflow-hidden">
+          <section className="space-y-6">
           <div className="bg-white rounded-2xl shadow p-4">
             <h2 className="text-base font-semibold mb-2">Mapping Readiness</h2>
             <p className="text-xs text-slate-600 mb-3">These columns make downstream COA/GL → Tax mapping easier. Use the tools below to create/clean them.</p>
@@ -576,12 +599,14 @@ export default function Home(){
             <h2 className="text-base font-semibold mb-3">Pipeline</h2>
             <ol id="pipeline" className="space-y-2 text-sm"></ol>
           </div>
-        </section>
+          </section>
+        </aside>
 
-        <section className="lg:col-span-3 bg-white rounded-2xl shadow p-4">
+        <section id="main-section" className="flex-1 min-w-0 bg-white rounded-2xl shadow p-4">
           <div className="flex items-center gap-3 mb-3">
             <div className="text-sm text-slate-600">Rows: <span id="row-count">0</span></div>
             <div className="ml-auto flex items-center gap-2">
+              <button id="sidebar-toggle" className="px-3 py-2 rounded-lg bg-slate-100 text-sm">Close Menu</button>
               <button id="undo" aria-label="Undo" className="px-3 py-2 rounded-lg bg-slate-100 text-sm flex items-center gap-2 opacity-50 cursor-not-allowed" disabled>
                 <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path d="M7.707 3.293a1 1 0 00-1.414 0L1.586 8l4.707 4.707a1 1 0 001.414-1.414L5.414 9H11a4 4 0 010 8h-2a1 1 0 100 2h2a6 6 0 000-12H5.414l2.293-2.293a1 1 0 000-1.414z"/></svg>
                 <span>Undo</span>

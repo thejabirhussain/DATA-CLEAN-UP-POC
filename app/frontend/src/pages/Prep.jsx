@@ -81,13 +81,19 @@ export default function Prep(){
 
     // Chat state
     let MESSAGES = []
-    let selectedLLM = 'Gemini'
+    let selectedLLM = 'gemini'
     // initialize LLM selector UI
     if (llmSelect){
       llmSelect.value = selectedLLM
-      llmSelect.addEventListener('change', () => { selectedLLM = llmSelect.value || 'Gemini'; if (llmActiveLabel) llmActiveLabel.textContent = selectedLLM })
+      llmSelect.addEventListener('change', () => { 
+        selectedLLM = llmSelect.value || 'gemini'
+        if (llmActiveLabel) {
+          const displayName = llmSelect.options[llmSelect.selectedIndex].text
+          llmActiveLabel.textContent = displayName
+        }
+      })
     }
-    if (llmActiveLabel) llmActiveLabel.textContent = selectedLLM
+    if (llmActiveLabel) llmActiveLabel.textContent = 'Gemini'
     // Transform state
     let transformLoading = false
     let sessionId = null
@@ -220,7 +226,7 @@ export default function Prep(){
       if (!text){ setTransformStatus('Please enter an instruction', 'error'); return }
       const startTime = performance.now(); transformLoading = true; if (transformBtn){ transformBtn.disabled = true; transformBtn.textContent = 'Transforming…'; transformBtn.classList.add('opacity-70') }
       try{
-        const body = { instruction: text }
+        const body = { instruction: text, model: selectedLLM }
         if (sessionId) body.session_id = sessionId
         const resp = await fetch(`${API_BASE}/transform`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body) })
         const result = await resp.json()
@@ -529,11 +535,11 @@ export default function Prep(){
                 <div className="flex items-center gap-2">
                   <label htmlFor="llm-select" className="text-xs text-slate-600">Model</label>
                   <select id="llm-select" className="rounded border border-slate-300 text-xs px-2 py-1">
-                    <option value="Gemini">Gemini</option>
-                    <option value="GPT-4">GPT-4</option>
-                    <option value="Claude">Claude</option>
-                    <option value="Llama">Llama</option>
-                    <option value="Custom Model">Custom Model</option>
+                    <option value="gemini">Gemini</option>
+                    <option value="ollama">Ollama (Llama)</option>
+                    <option value="gpt-4">GPT-4</option>
+                    <option value="claude">Claude</option>
+                    <option value="custom">Custom Model</option>
                   </select>
                 </div>
               </div>

@@ -38,12 +38,14 @@ def safe_to_dict(df: pd.DataFrame, orient='records'):
 
 class TransformRequest(BaseModel):
     instruction: str
+    model: Optional[str] = "ollama"
 
 class CodeExecutionRequest(BaseModel):
     code: str
 
 class ChatRequest(BaseModel):
     message: str
+    model: Optional[str] = "gemini"
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
@@ -82,7 +84,8 @@ async def transform_data(request: TransformRequest):
     try:
         generated_code = await coder_agent.process_instruction(
             request.instruction, 
-            current_dataframe
+            current_dataframe,
+            request.model
         )
 
         
@@ -188,7 +191,8 @@ async def chat_with_agent(request: ChatRequest):
         response = await chat_agent.chat(
             request.message, 
             conversation_state.messages, 
-            current_dataframe
+            current_dataframe,
+            request.model
         )
         
         conversation_state.messages.append({

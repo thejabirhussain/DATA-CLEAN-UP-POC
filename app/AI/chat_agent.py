@@ -1,52 +1,4 @@
-# ============= OLLAMA VERSION (ACTIVE) =============
-# import requests
-# import pandas as pd
-# from typing import Dict, Any, List, Optional
-# from datetime import datetime
-# import re
-# from code_executor import CodeExecutor
-
-# class ConversationState:
-#     def __init__(self):
-#         self.messages = []
-#         self.dataframe = None
-#         self.dataframe_history = []
-
-# class ChatAgent:
-#     def __init__(self):
-#         self.ollama_url = "http://localhost:11434/api/generate"
-#         self.model = "qwen3-coder:30b"
-#         self.code_executor = CodeExecutor()
-        
-#     async def _get_model_response(self, context: str, message: str) -> str:
-#         full_prompt = f"{context}\n\nUSER: {message}\nASSISTANT:"
-        
-#         try:
-#             response = requests.post(self.ollama_url, json={
-#                 "model": self.model,
-#                 "prompt": full_prompt,
-#                 "stream": False,
-#                 "options": {
-#                     "temperature": 0.3,
-#                     "num_predict": 1000
-#                 }
-#             })
-            
-#             if response.status_code != 200:
-#                 return f"Sorry, I'm having trouble connecting to my AI model. Error: {response.status_code} - {response.text}"
-            
-#             try:
-#                 result = response.json()
-#                 return result.get("response", "I couldn't generate a response.")
-#             except ValueError as json_error:
-#                 return f"Sorry, I received an invalid response from the AI model. Raw response: {response.text[:200]}..."
-            
-#         except requests.exceptions.RequestException as req_error:
-#             return f"Sorry, I couldn't connect to the AI model: {str(req_error)}"
-#         except Exception as e:
-#             return f"Sorry, I encountered an unexpected error: {str(e)}"
-
-# ============= GEMINI VERSION (COMMENTED OUT) =============
+import requests
 import google.generativeai as genai
 import pandas as pd
 from typing import Dict, Any, List, Optional
@@ -62,16 +14,61 @@ class ConversationState:
 
 class ChatAgent:
     def __init__(self):
+        # Initialize both model types
+        self.ollama_url = "http://localhost:11434/api/generate"
+        self.ollama_model = "qwen3-coder:30b"
+        
+        # Gemini setup
         api_key = "AIzaSyCcEOYX8bnkiC6uuhz3yGQ8Uq00z0Z2YCs"  # Replace with your actual API key
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-2.5-flash')
+        self.gemini_model = genai.GenerativeModel('gemini-2.5-flash')
+        
         self.code_executor = CodeExecutor()
         
-    async def _get_model_response(self, context: str, message: str) -> str:
+    async def _get_model_response(self, context: str, message: str, model_type: str = "gemini") -> str:
         full_prompt = f"{context}\n\nUSER: {message}\nASSISTANT:"
         
+        if model_type.lower() in ["ollama", "llama"]:
+            return await self._get_ollama_response(full_prompt)
+        elif model_type.lower() == "gemini":
+            return await self._get_gemini_response(full_prompt)
+        elif model_type.lower() in ["gpt-4", "gpt4", "openai"]:
+            return await self._get_gpt4_response(full_prompt)
+        elif model_type.lower() in ["claude", "anthropic"]:
+            return await self._get_claude_response(full_prompt)
+        else:
+            # Default to Gemini for unknown models
+            return await self._get_gemini_response(full_prompt)
+    
+    async def _get_ollama_response(self, full_prompt: str) -> str:
         try:
-            response = self.model.generate_content(
+            response = requests.post(self.ollama_url, json={
+                "model": self.ollama_model,
+                "prompt": full_prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.3,
+                    "num_predict": 1000
+                }
+            })
+            
+            if response.status_code != 200:
+                return f"Sorry, I'm having trouble connecting to Ollama. Error: {response.status_code} - {response.text}"
+            
+            try:
+                result = response.json()
+                return result.get("response", "I couldn't generate a response.")
+            except ValueError as json_error:
+                return f"Sorry, I received an invalid response from Ollama. Raw response: {response.text[:200]}..."
+            
+        except requests.exceptions.RequestException as req_error:
+            return f"Sorry, I couldn't connect to Ollama: {str(req_error)}"
+        except Exception as e:
+            return f"Sorry, I encountered an unexpected error with Ollama: {str(e)}"
+    
+    async def _get_gemini_response(self, full_prompt: str) -> str:
+        try:
+            response = self.gemini_model.generate_content(
                 full_prompt,
                 generation_config=genai.types.GenerationConfig(
                     temperature=0.3,
@@ -85,13 +82,23 @@ class ChatAgent:
                 return "I couldn't generate a response. Please try again."
                 
         except Exception as e:
-            return f"Sorry, I encountered an error: {str(e)}"
+            return f"Sorry, I encountered an error with Gemini: {str(e)}"
+    
+    async def _get_gpt4_response(self, full_prompt: str) -> str:
+        # Placeholder for GPT-4 integration
+        # You would need to add openai library and configure API key
+        return "GPT-4 integration not yet implemented. Please use Gemini or Ollama for now."
+    
+    async def _get_claude_response(self, full_prompt: str) -> str:
+        # Placeholder for Claude integration
+        # You would need to add anthropic library and configure API key
+        return "Claude integration not yet implemented. Please use Gemini or Ollama for now."
 
 # ============= SHARED METHODS (ALWAYS ACTIVE) =============
-    async def chat(self, message: str, conversation_history: List[Dict], df: pd.DataFrame = None) -> Dict:
+    async def chat(self, message: str, conversation_history: List[Dict], df: pd.DataFrame = None, model_type: str = "gemini") -> Dict:
         context = self._build_conversation_context(conversation_history, df)
         
-        response = await self._get_model_response(context, message)
+        response = await self._get_model_response(context, message, model_type)
         
         if self._contains_code_execution(response):
             code = self._extract_code_from_response(response)

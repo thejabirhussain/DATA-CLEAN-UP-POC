@@ -14,12 +14,10 @@ class ConversationState:
 
 class ChatAgent:
     def __init__(self):
-        # Initialize both model types
         self.ollama_url = "http://localhost:11434/api/generate"
-        self.ollama_model = "qwen3-coder:30b"
+        self.ollama_model = "deepseek-r1:32b"
         
-        # Gemini setup
-        api_key = "AIzaSyCcEOYX8bnkiC6uuhz3yGQ8Uq00z0Z2YCs"  # Replace with your actual API key
+        api_key = "AIzaSyCcEOYX8bnkiC6uuhz3yGQ8Uq00z0Z2YCs"
         genai.configure(api_key=api_key)
         self.gemini_model = genai.GenerativeModel('gemini-2.5-flash')
         
@@ -32,12 +30,7 @@ class ChatAgent:
             return await self._get_ollama_response(full_prompt)
         elif model_type.lower() == "gemini":
             return await self._get_gemini_response(full_prompt)
-        elif model_type.lower() in ["gpt-4", "gpt4", "openai"]:
-            return await self._get_gpt4_response(full_prompt)
-        elif model_type.lower() in ["claude", "anthropic"]:
-            return await self._get_claude_response(full_prompt)
         else:
-            # Default to Gemini for unknown models
             return await self._get_gemini_response(full_prompt)
     
     async def _get_ollama_response(self, full_prompt: str) -> str:
@@ -57,7 +50,8 @@ class ChatAgent:
             
             try:
                 result = response.json()
-                return result.get("response", "I couldn't generate a response.")
+                raw_text = result.get("response", "I couldn't generate a response.")
+                return raw_text
             except ValueError as json_error:
                 return f"Sorry, I received an invalid response from Ollama. Raw response: {response.text[:200]}..."
             
@@ -84,38 +78,44 @@ class ChatAgent:
         except Exception as e:
             return f"Sorry, I encountered an error with Gemini: {str(e)}"
     
-    async def _get_gpt4_response(self, full_prompt: str) -> str:
-        # Placeholder for GPT-4 integration
-        # You would need to add openai library and configure API key
-        return "GPT-4 integration not yet implemented. Please use Gemini or Ollama for now."
-    
-    async def _get_claude_response(self, full_prompt: str) -> str:
-        # Placeholder for Claude integration
-        # You would need to add anthropic library and configure API key
-        return "Claude integration not yet implemented. Please use Gemini or Ollama for now."
-
-# ============= SHARED METHODS (ALWAYS ACTIVE) =============
     async def chat(self, message: str, conversation_history: List[Dict], df: pd.DataFrame = None, model_type: str = "gemini") -> Dict:
         context = self._build_conversation_context(conversation_history, df)
         
         response = await self._get_model_response(context, message, model_type)
         
+        if (model_type or "").lower() in ["ollama", "llama"]:
+            response = self._strip_deepseek_think(response)
+        print("------------- RAW MODEL RESPONSE -------------")
+        print(response)
+        
         if self._contains_code_execution(response):
             code = self._extract_code_from_response(response)
-            print(f"CODE EXECUTED: {code}")
+            print("------------- CODE EXECUTED -------------")
+            print(code)
             execution_result = self._execute_code_safely(code, df)
             user_message = self._extract_user_message_from_response(response)
             
             return {
                 'message': user_message,
                 'has_code': True,
-                'execution_result': execution_result
+                'execution_result': execution_result,
+                'raw_response': response,
+                'executed_code': code
             }
         else:
             return {
                 'message': response,
-                'has_code': False
+                'has_code': False,
+                'raw_response': response,
             }
+            
+    def _strip_deepseek_think(self, text: str) -> str:
+        try:
+            if not text:
+                return text
+            return re.sub(r"<\s*think\s*>[\s\S]*?<\s*/\s*think\s*>", "", text, flags=re.IGNORECASE)
+        except Exception:
+            return text
     
     def _build_conversation_context(self, history: List[Dict], df: pd.DataFrame) -> str:
         df_info = self._get_dataframe_info(df) if df is not None else "No data loaded"
@@ -184,18 +184,13 @@ CONVERSATION HISTORY:
         return system_prompt
     
     def _contains_code_execution(self, response: str) -> bool:
-        return ("<execute_code>" in response and "</execute_code>" in response) or \
-               ("```python" in response and "```" in response)
+        return ("<execute_code>" in response and "</execute_code>" in response)
     
     def _extract_code_from_response(self, response: str) -> str:
         try:
             if "<execute_code>" in response:
                 start = response.find("<execute_code>") + len("<execute_code>")
                 end = response.find("</execute_code>")
-                return response[start:end].strip()
-            elif "```python" in response:
-                start = response.find("```python") + len("```python")
-                end = response.find("```", start)
                 return response[start:end].strip()
             return ""
         except:
@@ -204,10 +199,6 @@ CONVERSATION HISTORY:
     def _extract_user_message_from_response(self, response: str) -> str:
         try:
             code_start = response.find("<execute_code>")
-            if code_start != -1:
-                return response[:code_start].strip()
-            
-            code_start = response.find("```python")
             if code_start != -1:
                 return response[:code_start].strip()
             

@@ -38,7 +38,7 @@ def safe_to_dict(df: pd.DataFrame, orient='records'):
 
 class TransformRequest(BaseModel):
     instruction: str
-    model: Optional[str] = "ollama"
+    model: Optional[str] = None
 
 class CodeExecutionRequest(BaseModel):
     code: str
@@ -79,13 +79,11 @@ async def upload_file(file: UploadFile = File(...)):
 async def transform_data(request: TransformRequest):
     global current_dataframe
     
-
-    
     try:
         generated_code = await coder_agent.process_instruction(
             request.instruction, 
             current_dataframe,
-            request.model
+            "ollama"
         )
 
         
@@ -180,7 +178,6 @@ async def chat_with_agent(request: ChatRequest):
     global current_dataframe, conversation_state
     
     try:
-        print(f"\nUSER: {request.message}")
         
         conversation_state.messages.append({
             'role': 'user',
@@ -213,10 +210,28 @@ async def chat_with_agent(request: ChatRequest):
                 dataframe_updated = True
 
         
+        safe_execution_result = None
+        if response.get('execution_result') is not None:
+            er = dict(response['execution_result'])
+            if 'dataframe' in er:
+                er.pop('dataframe', None)
+            if isinstance(er.get('original_shape'), (list, tuple)):
+                er['original_shape'] = [int(x) for x in er['original_shape']]
+            if isinstance(er.get('new_shape'), (list, tuple)):
+                er['new_shape'] = [int(x) for x in er['new_shape']]
+            if 'execution_log' in er and er['execution_log'] is not None:
+                er['execution_log'] = str(er['execution_log'])
+            if 'error' in er and er['error'] is not None:
+                er['error'] = str(er['error'])
+            safe_execution_result = er
+
         return {
             'success': True,
             'message': response['message'],
-            'dataframe_updated': dataframe_updated
+            'dataframe_updated': dataframe_updated,
+            'raw_response': response.get('raw_response'),
+            'executed_code': response.get('executed_code'),
+            'execution_result': safe_execution_result,
         }
         
     except Exception as e:

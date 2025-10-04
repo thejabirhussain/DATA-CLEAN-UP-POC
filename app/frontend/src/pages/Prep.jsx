@@ -66,6 +66,18 @@ export default function Prep(){
       renderTable(); updateHistoryInfo()
     }
 
+    async function apiRedo(){
+      try{
+        const resp = await fetch(`${API_BASE}/redo`, { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+        const result = await resp.json()
+        if (result.success){
+          displayData(result.preview, result.result_columns, result.total_rows)
+          // backend redo supersedes local history
+          HISTORY = []; FUTURE = []; updateHistoryInfo()
+        }
+      } catch(e){ console.warn('Redo failed', e) }
+    }
+
     // DOM
     const $ = (id) => root.querySelector('#'+id)
     const fileInput = $("file-input"); const pickBtn = $("pick-file"); const dropzone = $("dropzone"); const fileNameEl = $("file-name")
@@ -172,6 +184,8 @@ export default function Prep(){
           td.className = `px-3 py-1 border-b border-slate-100 ${idx===0 ? 'sticky-col' : ''}`
           const input = document.createElement('input')
           input.value = r[c] ?? ''
+          // show full cell content in tooltip
+          input.title = String(r[c] ?? '')
           input.className = 'w-full bg-transparent outline-none text-sm'
           input.addEventListener('change', (e) => { pushHistory(); r[c] = e.target.value; updateHistoryInfo() })
           td.appendChild(input)
@@ -251,7 +265,8 @@ export default function Prep(){
             let msg = ''
             if (result.type === 'transformation'){
               msg = `Transformation completed in ${executionTime}s! Result: ${result.result_shape[0]} rows × ${result.result_shape[1]} columns`
-              pushHistory(); await loadDataPage(1)
+              // backend has updated dataframe; sync view and reset local manual history
+              await loadDataPage(1); HISTORY = []; FUTURE = []; updateHistoryInfo()
             } else {
               msg = `Processing completed in ${executionTime}s! ${result.message || 'Operation successful'}`
             }
@@ -275,7 +290,7 @@ export default function Prep(){
       try{
         const resp = await fetch(`${API_BASE}/undo`, { method:'POST', headers:{ 'Content-Type':'application/json' } })
         const result = await resp.json()
-        if (result.success){ setTransformStatus('Successfully undone last transformation!', 'success'); await loadDataPage(1) }
+        if (result.success){ setTransformStatus('Successfully undone last transformation!', 'success'); await loadDataPage(1); HISTORY = []; FUTURE = []; updateHistoryInfo() }
         else { setTransformStatus(`Undo failed: ${result.error}`, 'error') }
       } catch(e){ setTransformStatus(`Undo error: ${e.message}`, 'error') }
     }
@@ -292,7 +307,7 @@ export default function Prep(){
           let msg = ''
           if (result.type === 'transformation'){
             msg = `Transformation completed in ${executionTime}s! Result: ${result.result_shape[0]} rows × ${result.result_shape[1]} columns`
-            pushHistory(); await loadDataPage(1)
+            await loadDataPage(1); HISTORY = []; FUTURE = []; updateHistoryInfo()
           } else { msg = `Processing completed in ${executionTime}s! ${result.message || 'Operation successful'}` }
           if (result.execution_log && result.execution_log.includes('Execution time:')){
             const m = result.execution_log.match(/Execution time: ([\d.]+)s/); if (m) msg += ` (Backend: ${m[1]}s)`
@@ -355,8 +370,12 @@ export default function Prep(){
     if (sidebarToggle) sidebarToggle.addEventListener('click', () => { sidebarOpen = !sidebarOpen; setSidebar(sidebarOpen) })
 
     if (undoBtn) undoBtn.addEventListener('click', async () => { if (canUndo()) { undo() } else { await apiUndo() } })
-    if (redoBtn) redoBtn.addEventListener('click', redo)
-    window.addEventListener('keydown', (e) => { const z = (e.key === 'z' || e.key === 'Z'); if ((e.metaKey || e.ctrlKey) && z && !e.shiftKey) { e.preventDefault(); undo() } if ((e.metaKey || e.ctrlKey) && z && e.shiftKey) { e.preventDefault(); redo() } })
+    if (redoBtn) redoBtn.addEventListener('click', async () => { if (canRedo()) { redo() } else { await apiRedo() } })
+    window.addEventListener('keydown', (e) => {
+      const z = (e.key === 'z' || e.key === 'Z')
+      if ((e.metaKey || e.ctrlKey) && z && !e.shiftKey) { e.preventDefault(); undo() }
+      if ((e.metaKey || e.ctrlKey) && z && e.shiftKey) { e.preventDefault(); if (canRedo()) { redo() } else { apiRedo() } }
+    })
 
     function updateHistoryUI(){
       const undoAvail = canUndo()

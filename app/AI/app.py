@@ -16,7 +16,7 @@ from datetime import datetime
 from werkzeug.utils import secure_filename
 
 # Configure Tesseract path (update this if Tesseract is installed elsewhere)
-# pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 app = FastAPI(title="Excel NLP Transformer", version="1.0.0")
 
@@ -62,7 +62,6 @@ class CodeExecutionRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
-    model: Optional[str] = "gemini"
 
 class RagQueryRequest(BaseModel):
     question: str
@@ -223,8 +222,7 @@ async def chat_with_agent(request: ChatRequest):
         response = await chat_agent.chat(
             request.message,
             conversation_state.messages,
-            current_dataframe,
-            request.model
+            current_dataframe
         )
 
         # record assistant message

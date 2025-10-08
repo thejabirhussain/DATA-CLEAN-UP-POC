@@ -83,7 +83,7 @@ export default function Prep(){
     const fileInput = $("file-input"); const pickBtn = $("pick-file"); const dropzone = $("dropzone"); const fileNameEl = $("file-name")
     const exportCSVBtn = $("export-csv"); const exportXLSXBtn = $("export-xlsx"); const exportJSONBtn = $("export-json"); const exportParquetBtn = $("export-parquet"); const saveRecipeBtn = $("save-recipe"); const loadRecipeBtn = $("load-recipe"); const recipeInput = $("recipe-input")
     const undoBtn = $("undo"); const redoBtn = $("redo"); const historyInfo = $("history-info")
-    const chatSidebar = $("chat-sidebar"); const chatMessages = $("chat-messages"); const chatInput = $("chat-input"); const chatSend = $("chat-send"); const chatClear = $("chat-clear"); const mainSection = $("main-section"); const sidebarToggle = $("sidebar-toggle"); const llmSelect = $("llm-select"); const llmActiveLabel = $("llm-active")
+    const chatSidebar = $("chat-sidebar"); const chatMessages = $("chat-messages"); const chatInput = $("chat-input"); const chatSend = $("chat-send"); const chatClear = $("chat-clear"); const mainSection = $("main-section"); const sidebarToggle = $("sidebar-toggle")
     // Transform DOM (mirroring demo.jsx)
     const instructionEl = $("instruction"); const transformBtn = $("transform-btn"); const undoBackendBtn = $("undo-backend"); const transformStatusEl = $("transform-status")
     const followupSection = $("followupSection"); const followupMsgEl = $("followupMessage"); const followupQsEl = $("followupQuestions"); const followupSubmitBtn = $("followupSubmit"); const followupCancelBtn = $("followupCancel")
@@ -93,19 +93,7 @@ export default function Prep(){
 
     // Chat state
     let MESSAGES = []
-    let selectedLLM = 'gemini'
-    // initialize LLM selector UI
-    if (llmSelect){
-      llmSelect.value = selectedLLM
-      llmSelect.addEventListener('change', () => { 
-        selectedLLM = llmSelect.value || 'gemini'
-        if (llmActiveLabel) {
-          const displayName = llmSelect.options[llmSelect.selectedIndex].text
-          llmActiveLabel.textContent = displayName
-        }
-      })
-    }
-    if (llmActiveLabel) llmActiveLabel.textContent = 'Gemini 2.5 Flash'
+    let selectedLLM = 'ollama'
     // Transform state
     let transformLoading = false
     let sessionId = null
@@ -551,15 +539,7 @@ export default function Prep(){
             <div className="bg-white rounded-2xl shadow p-4">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-sm font-semibold">Chat with AI Assistant</h3>
-                <div className="flex items-center gap-2">
-                  <label htmlFor="llm-select" className="text-xs text-slate-600">Model</label>
-                  <select id="llm-select" className="rounded border border-slate-300 text-xs px-2 py-1">
-                    <option value="gemini">Gemini 2.5 Flash</option>
-                    <option value="ollama">DeepSeek R1 32B (Ollama)</option>
-                  </select>
-                </div>
               </div>
-              <div className="text-[11px] text-slate-500 mb-2">Active: <span id="llm-active" className="font-medium">Gemini</span></div>
               <div className="h-64 overflow-y-auto pr-1 mb-2">
                 <div id="chat-messages" className="flex flex-col"></div>
               </div>

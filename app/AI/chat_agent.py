@@ -1,5 +1,4 @@
 import requests
-import google.generativeai as genai
 import pandas as pd
 from typing import Dict, Any, List, Optional
 from datetime import datetime
@@ -16,22 +15,11 @@ class ChatAgent:
     def __init__(self):
         self.ollama_url = "http://localhost:11434/api/generate"
         self.ollama_model = "deepseek-r1:32b"
-        
-        api_key = "AIzaSyCcEOYX8bnkiC6uuhz3yGQ8Uq00z0Z2YCs"
-        genai.configure(api_key=api_key)
-        self.gemini_model = genai.GenerativeModel('gemini-2.5-flash')
-        
         self.code_executor = CodeExecutor()
         
-    async def _get_model_response(self, context: str, message: str, model_type: str = "gemini") -> str:
+    async def _get_model_response(self, context: str, message: str, model_type: str = "ollama") -> str:
         full_prompt = f"{context}\n\nUSER: {message}\nASSISTANT:"
-        
-        if model_type.lower() in ["ollama", "llama"]:
-            return await self._get_ollama_response(full_prompt)
-        elif model_type.lower() == "gemini":
-            return await self._get_gemini_response(full_prompt)
-        else:
-            return await self._get_gemini_response(full_prompt)
+        return await self._get_ollama_response(full_prompt)
     
     async def _get_ollama_response(self, full_prompt: str) -> str:
         try:
@@ -60,31 +48,11 @@ class ChatAgent:
         except Exception as e:
             return f"Sorry, I encountered an unexpected error with Ollama: {str(e)}"
     
-    async def _get_gemini_response(self, full_prompt: str) -> str:
-        try:
-            response = self.gemini_model.generate_content(
-                full_prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.3,
-                    max_output_tokens=1000,
-                )
-            )
-            
-            if response.text:
-                return response.text
-            else:
-                return "I couldn't generate a response. Please try again."
-                
-        except Exception as e:
-            return f"Sorry, I encountered an error with Gemini: {str(e)}"
-    
-    async def chat(self, message: str, conversation_history: List[Dict], df: pd.DataFrame = None, model_type: str = "gemini") -> Dict:
+    async def chat(self, message: str, conversation_history: List[Dict], df: pd.DataFrame = None, model_type: str = "ollama") -> Dict:
         context = self._build_conversation_context(conversation_history, df)
         
         response = await self._get_model_response(context, message, model_type)
-        
-        if (model_type or "").lower() in ["ollama", "llama"]:
-            response = self._strip_deepseek_think(response)
+        response = self._strip_deepseek_think(response)
         print("------------- RAW MODEL RESPONSE -------------")
         print(response)
         

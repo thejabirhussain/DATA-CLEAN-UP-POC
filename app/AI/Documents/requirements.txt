@@ -11,3 +11,11 @@ matplotlib>=3.7.0
 seaborn>=0.12.0
 xlsxwriter>=3.1.0
 google-generativeai>=0.3.0
+
+# RAG System Dependencies
+pytesseract>=0.3.10
+Pillow>=10.0.0
+PyMuPDF>=1.23.0
+chromadb>=0.4.0
+sentence-transformers>=2.2.0
+Werkzeug>=3.0.0

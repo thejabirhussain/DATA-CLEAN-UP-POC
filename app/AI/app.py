@@ -1,15 +1,22 @@
 import io
+import os
 import pandas as pd
+import pytesseract
 from pydantic import BaseModel
 from coder import CoderAgent
 from code_executor import CodeExecutor
 from chat_agent import ChatAgent, ConversationState
+from rag import RagSystem
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from typing import Optional
 from datetime import datetime
+from werkzeug.utils import secure_filename
+
+# Configure Tesseract path (update this if Tesseract is installed elsewhere)
+# pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 app = FastAPI(title="Excel NLP Transformer", version="1.0.0")
 
@@ -23,6 +30,10 @@ app.add_middleware(
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# Configure upload settings for RAG
+PDF_UPLOAD_FOLDER = 'uploads/pdfs'
+os.makedirs(PDF_UPLOAD_FOLDER, exist_ok=True)
+
 current_dataframe: pd.DataFrame = None
 # Maintain full history stacks for robust undo/redo
 undo_stack: list[pd.DataFrame] = []
@@ -32,6 +43,10 @@ coder_agent = CoderAgent()
 code_executor = CodeExecutor()
 conversation_state = ConversationState()
 chat_agent = ChatAgent()
+
+# RAG system for document Q&A
+rag_system: Optional[RagSystem] = None
+gemini_api_key = os.getenv("GEMINI_API_KEY", "AIzaSyC5OZ6UW4rAgAunXVcaP-ZihOnJQgOLbG4")
 
 def safe_to_dict(df: pd.DataFrame, orient='records'):
     df_clean = df.copy()
@@ -48,6 +63,9 @@ class CodeExecutionRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     model: Optional[str] = "gemini"
+
+class RagQueryRequest(BaseModel):
+    question: str
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
@@ -307,6 +325,74 @@ async def clear_chat_history():
     global conversation_state
     conversation_state.messages = []
     return {'success': True, 'message': 'Chat history cleared'}
+
+@app.post("/rag/upload")
+async def upload_pdf(file: UploadFile = File(...)):
+    global rag_system
+    
+    if not file.filename.endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    
+    try:
+        # Save the uploaded file
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(PDF_UPLOAD_FOLDER, filename)
+        
+        contents = await file.read()
+        with open(filepath, 'wb') as f:
+            f.write(contents)
+        
+        # Initialize RAG system and index the PDF
+        rag_system = RagSystem(
+            gemini_api_key=gemini_api_key,
+            model="gemini-2.0-flash-exp"
+        )
+        rag_system.index_pdf(filepath)
+        
+        return {
+            "success": True,
+            "message": "PDF uploaded and processed successfully",
+            "filename": filename
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
+
+@app.post("/rag/query")
+async def query_document(request: RagQueryRequest):
+    global rag_system
+    
+    if rag_system is None:
+        raise HTTPException(status_code=400, detail="No PDF has been uploaded yet. Please upload a PDF first.")
+    
+    if not request.question:
+        raise HTTPException(status_code=400, detail="No question provided")
+    
+    try:
+        response = rag_system.query(request.question)
+        return {
+            "success": True,
+            "answer": response
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
+
+@app.get("/rag/status")
+async def get_rag_status():
+    global rag_system
+    
+    return {
+        "document_loaded": rag_system is not None,
+        "pdf_name": os.path.basename(rag_system.pdf_path) if rag_system and rag_system.pdf_path else None
+    }
+
+@app.post("/rag/clear")
+async def clear_rag_system():
+    global rag_system
+    rag_system = None
+    return {
+        "success": True,
+        "message": "RAG system cleared"
+    }
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root():

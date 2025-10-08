@@ -3,6 +3,7 @@ import { Link, Route, Routes, NavLink } from 'react-router-dom'
 import Home from './pages/Home.jsx'
 import Diagnostics from './pages/Diagnostics.jsx'
 import Prep from './pages/Prep.jsx'
+import DocumentQA from './pages/DocumentQA.jsx'
 
 function Layout({ children }){
   return (
@@ -18,6 +19,7 @@ function Layout({ children }){
             <NavLink to="/" end className={({isActive})=>`px-3 py-1 rounded-lg ${isActive? 'bg-emerald-50 text-emerald-700' : 'text-slate-700 hover:bg-slate-50'}`}>Clean & Prep</NavLink>
             <NavLink to="/diagnostics" className={({isActive})=>`px-3 py-1 rounded-lg ${isActive? 'bg-emerald-50 text-emerald-700' : 'text-slate-700 hover:bg-slate-50'}`}>Diagnostics</NavLink>
             <NavLink to="/prep" className={({isActive})=>`px-3 py-1 rounded-lg ${isActive? 'bg-emerald-50 text-emerald-700' : 'text-slate-700 hover:bg-slate-50'}`}>Clean & Prep (Advanced)</NavLink>
+            <NavLink to="/document-qa" className={({isActive})=>`px-3 py-1 rounded-lg ${isActive? 'bg-emerald-50 text-emerald-700' : 'text-slate-700 hover:bg-slate-50'}`}>Document Q&A</NavLink>
           </nav>
         </div>
       </header>
@@ -33,6 +35,7 @@ export default function App(){
         <Route path="/" element={<Home/>} />
         <Route path="/diagnostics" element={<Diagnostics/>} />
         <Route path="/prep" element={<Prep/>} />
+        <Route path="/document-qa" element={<DocumentQA/>} />
       </Routes>
     </Layout>
   )

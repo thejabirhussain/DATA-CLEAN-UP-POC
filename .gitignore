@@ -20,6 +20,12 @@ wheels/
 .installed.cfg
 *.egg
 
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
 # Node
 node_modules/
 npm-debug.log*
@@ -47,3 +53,9 @@ yarn-error.log*
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# RAG System
+app/AI/uploads/
+chroma_db_*/
+*_tables.json
+data.csv

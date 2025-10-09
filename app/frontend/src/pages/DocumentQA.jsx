@@ -113,69 +113,48 @@ export default function DocumentQA() {
   }
 
   return (
-    <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px', fontFamily: 'monospace' }}>
-      <h1 style={{ fontSize: '24px', marginBottom: '20px', borderBottom: '2px solid black', paddingBottom: '10px' }}>
-        Document Q&A
-      </h1>
-
+    <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       {/* Upload Section */}
-      <div style={{ border: '1px solid black', padding: '20px', marginBottom: '20px', backgroundColor: 'white' }}>
-        <h2 style={{ fontSize: '18px', marginBottom: '15px' }}>Upload Document</h2>
-        
+      <section className="bg-white rounded-2xl shadow p-4 mb-6">
+        <h2 className="text-base font-semibold mb-3">Upload Document</h2>
+
         {documentLoaded ? (
           <div>
-            <p style={{ marginBottom: '10px' }}>
-              <strong>Current Document:</strong> {documentName}
+            <p className="mb-2 text-sm">
+              <span className="font-semibold">Current Document:</span> {documentName}
             </p>
-            <p style={{ fontSize: '14px', color: '#666' }}>
-              Chat is enabled. Ask questions about the document below.
-            </p>
+            <p className="text-xs text-slate-600">Chat is enabled. Ask questions about the document below.</p>
           </div>
         ) : (
-          <div>
+          <div className="space-y-3">
             <input
               type="file"
               accept=".pdf"
               onChange={handleFileChange}
-              style={{ display: 'block', marginBottom: '10px', padding: '5px', border: '1px solid black' }}
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
             />
             {file && (
-              <p style={{ marginBottom: '10px', fontSize: '14px' }}>
-                Selected: {file.name}
-              </p>
+              <p className="text-sm text-slate-600">Selected: {file.name}</p>
             )}
             <button
               onClick={handleUpload}
               disabled={!file || uploading}
-              style={{
-                padding: '10px 20px',
-                backgroundColor: uploading ? '#ccc' : 'black',
-                color: 'white',
-                border: 'none',
-                cursor: uploading || !file ? 'not-allowed' : 'pointer',
-                fontSize: '14px'
-              }}
+              className="px-4 py-2 rounded-xl text-white text-sm font-medium bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {uploading ? 'Processing...' : 'Upload PDF'}
+              {uploading ? 'Processing…' : 'Upload PDF'}
             </button>
           </div>
         )}
-      </div>
+      </section>
 
       {/* Chat Section */}
-      <div style={{ border: '1px solid black', padding: '20px', backgroundColor: 'white' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-          <h2 style={{ fontSize: '18px', margin: 0 }}>Chat</h2>
+      <section className="bg-white rounded-2xl shadow p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-base font-semibold">Chat</h2>
           {messages.length > 0 && (
             <button
               onClick={handleClearChat}
-              style={{
-                padding: '5px 10px',
-                backgroundColor: 'white',
-                border: '1px solid black',
-                cursor: 'pointer',
-                fontSize: '12px'
-              }}
+              className="px-3 py-1 rounded-lg bg-slate-100 text-slate-800 text-xs hover:bg-slate-200"
             >
               Clear Chat
             </button>
@@ -183,37 +162,21 @@ export default function DocumentQA() {
         </div>
 
         {/* Messages */}
-        <div style={{
-          border: '1px solid black',
-          padding: '10px',
-          minHeight: '300px',
-          maxHeight: '500px',
-          overflowY: 'auto',
-          marginBottom: '15px',
-          backgroundColor: '#fafafa'
-        }}>
+        <div className="border border-slate-200 rounded-xl p-3 min-h-[300px] max-h-[500px] overflow-y-auto mb-3 bg-slate-50 flex flex-col">
           {messages.length === 0 ? (
-            <p style={{ color: '#999', fontSize: '14px' }}>
-              {documentLoaded ? 'Ask a question about the document...' : 'Upload a document to start chatting'}
+            <p className="text-sm text-slate-500">
+              {documentLoaded ? 'Ask a question about the document…' : 'Upload a document to start chatting'}
             </p>
           ) : (
             messages.map((msg, idx) => (
               <div
                 key={idx}
-                style={{
-                  marginBottom: '15px',
-                  padding: '10px',
-                  backgroundColor: msg.role === 'user' ? 'white' : '#f0f0f0',
-                  border: '1px solid black',
-                  borderLeft: msg.role === 'user' ? '4px solid black' : '4px solid #666'
-                }}
+                className={`inline-block w-fit max-w-[70%] mb-2.5 px-3 py-1.5 rounded-2xl text-sm ${msg.role === 'user' ? 'bg-emerald-600 text-white self-end' : 'bg-slate-100 text-slate-800 self-start'}`}
               >
-                <div style={{ fontSize: '12px', fontWeight: 'bold', marginBottom: '5px' }}>
+                <div className="text-[11px] font-semibold mb-1 opacity-80">
                   {msg.role === 'user' ? 'YOU' : 'ASSISTANT'}
                 </div>
-                <div style={{ fontSize: '14px', whiteSpace: 'pre-wrap' }}>
-                  {msg.content}
-                </div>
+                <div className="whitespace-pre-wrap leading-5">{msg.content}</div>
               </div>
             ))
           )}
@@ -221,38 +184,25 @@ export default function DocumentQA() {
         </div>
 
         {/* Input */}
-        <div style={{ display: 'flex', gap: '10px' }}>
+        <div className="flex gap-2">
           <input
             type="text"
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             onKeyPress={handleKeyPress}
             disabled={!documentLoaded || querying}
-            placeholder={documentLoaded ? 'Type your question...' : 'Upload a document first'}
-            style={{
-              flex: 1,
-              padding: '10px',
-              border: '1px solid black',
-              fontSize: '14px',
-              backgroundColor: documentLoaded ? 'white' : '#f0f0f0'
-            }}
+            placeholder={documentLoaded ? 'Type your question…' : 'Upload a document first'}
+            className="flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm disabled:bg-slate-100"
           />
           <button
             onClick={handleAskQuestion}
             disabled={!documentLoaded || !question.trim() || querying}
-            style={{
-              padding: '10px 20px',
-              backgroundColor: (!documentLoaded || !question.trim() || querying) ? '#ccc' : 'black',
-              color: 'white',
-              border: 'none',
-              cursor: (!documentLoaded || !question.trim() || querying) ? 'not-allowed' : 'pointer',
-              fontSize: '14px'
-            }}
+            className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {querying ? 'Asking...' : 'Ask'}
+            {querying ? 'Asking…' : 'Ask'}
           </button>
         </div>
-      </div>
-    </div>
+      </section>
+    </main>
   )
 }

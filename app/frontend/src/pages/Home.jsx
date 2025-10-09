@@ -89,7 +89,8 @@ export default function Home(){
     const tOp = $("t-op")
     const tParams = $("t-params")
     const addStepBtn = $("add-step")
-    const runBtn = $("run-pipeline")
+    const runSelectedBtn = $("run-selected")
+    const runAllBtn = $("run-all")
     const enablePipeline = $("enable-pipeline")
     const pipelineList = $("pipeline")
 
@@ -233,7 +234,8 @@ export default function Home(){
       if (exportParquetBtn) exportParquetBtn.disabled = !hasData
       saveRecipeBtn.disabled = !hasData
       addStepBtn.disabled = !hasData
-      runBtn.disabled = !hasData
+      if (runSelectedBtn) runSelectedBtn.disabled = !hasData
+      if (runAllBtn) runAllBtn.disabled = !hasData
       clearEditsBtn.disabled = !hasData
       updateHistoryUI()
     }
@@ -452,8 +454,27 @@ export default function Home(){
 
     function applyPipeline(){ EDITED = clone(ORIGINAL); const enabled = PIPELINE.filter(s => s.enabled !== false); enabled.forEach(step => { EDITED = applyStep(EDITED, step) }) }
 
+    // New: run only enabled operations
+    function runSelectedOperations(){
+      if (!COLUMNS.length) return
+      // Optional: respect "Enable" master toggle if present
+      if (enablePipeline && !enablePipeline.checked) return
+      pushHistory(); applyPipeline(); renderTable();
+    }
+
+    // New: run all operations regardless of enabled flags
+    function runAllOperations(){
+      if (!COLUMNS.length) return
+      pushHistory()
+      EDITED = clone(ORIGINAL)
+      const steps = PIPELINE.slice()
+      steps.forEach(step => { EDITED = applyStep(EDITED, step) })
+      renderTable();
+    }
+
     // Wire buttons
-    runBtn.addEventListener('click', () => { if (!enablePipeline.checked) return; pushHistory(); applyPipeline(); renderTable(); })
+    if (runSelectedBtn) runSelectedBtn.addEventListener('click', runSelectedOperations)
+    if (runAllBtn) runAllBtn.addEventListener('click', runAllOperations)
     addStepBtn.addEventListener('click', () => { if (!COLUMNS.length) return; const step = { op: tOp.value, col: tCol.value, params: collectParams(), enabled: true }; addStep(step) })
 
     // Export
@@ -585,9 +606,10 @@ export default function Home(){
                 </select>
               </div>
               <div id="t-params" className="grid grid-cols-1 gap-2"></div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button id="add-step" className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700" disabled>Add Step</button>
-                <button id="run-pipeline" className="px-3 py-2 rounded-xl bg-slate-800 text-white text-sm hover:bg-slate-900" disabled>Run</button>
+                <button id="run-selected" className="px-3 py-2 rounded-xl bg-slate-800 text-white text-sm hover:bg-slate-900" disabled>Run Selected</button>
+                <button id="run-all" className="px-3 py-2 rounded-xl bg-slate-800 text-white text-sm hover:bg-slate-900" disabled>Run All</button>
                 <label className="flex items-center gap-2 text-xs text-slate-600 ml-auto">
                   <input id="enable-pipeline" type="checkbox" className="rounded" defaultChecked /> Enable
                 </label>

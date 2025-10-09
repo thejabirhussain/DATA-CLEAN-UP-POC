@@ -15,8 +15,7 @@ from typing import Optional
 from datetime import datetime
 from werkzeug.utils import secure_filename
 
-# Configure Tesseract path (update this if Tesseract is installed elsewhere)
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+pytesseract.pytesseract.tesseract_cmd = r"C:\dev\tesseract\tesseract.exe"
 
 app = FastAPI(title="Excel NLP Transformer", version="1.0.0")
 

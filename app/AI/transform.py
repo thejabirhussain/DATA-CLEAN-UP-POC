@@ -63,19 +63,32 @@ Generate code for: "{instruction}"
                 }
             })
             
-            if response.status_code != 200:
-                raise Exception(f"Ollama API error: {response.status_code} - {response.text}")
-            
             result = response.json()
             generated_code = result.get("response", "")
             print("------------- LLM RESPONSE -------------")
             print(generated_code)
             
-            # Extract code from <execute_code> tags
-            if "<execute_code>" in generated_code:
-                code_start = generated_code.find("<execute_code>") + len("<execute_code>")
-                code_end = generated_code.find("</execute_code>")
-                generated_code = generated_code[code_start:code_end].strip()
+            code_blocks = []
+            start_pos = 0
+            
+            while True:
+                start = generated_code.find("<execute_code>", start_pos)
+                if start == -1:
+                    break
+                    
+                start += len("<execute_code>")
+                end = generated_code.find("</execute_code>", start)
+                if end == -1:
+                    break
+                    
+                code_block = generated_code[start:end].strip()
+                if code_block:
+                    code_blocks.append(code_block)
+                
+                start_pos = end + len("</execute_code>")
+            
+            if code_blocks:
+                generated_code = "\n".join(code_blocks)
             
             return generated_code
             

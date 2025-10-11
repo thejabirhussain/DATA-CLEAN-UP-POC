@@ -19,9 +19,6 @@ class ChatAgent:
         
     async def _get_model_response(self, context: str, message: str, model_type: str = "ollama") -> str:
         full_prompt = f"{context}\n\nUSER: {message}\nASSISTANT:"
-        return await self._get_ollama_response(full_prompt)
-    
-    async def _get_ollama_response(self, full_prompt: str) -> str:
         try:
             response = requests.post(self.ollama_url, json={
                 "model": self.ollama_model,
@@ -29,24 +26,34 @@ class ChatAgent:
                 "stream": False,
                 "options": {
                     "temperature": 0.3,
-                    "num_predict": 600
+                "num_predict": 600
                 }
             })
             
-            if response.status_code != 200:
-                return f"Sorry, I'm having trouble connecting to Ollama. Error: {response.status_code} - {response.text}"
+            result = response.json()
+            raw_text = result.get("response")
+            return raw_text
             
-            try:
-                result = response.json()
-                raw_text = result.get("response", "I couldn't generate a response.")
-                return raw_text
-            except ValueError as json_error:
-                return f"Sorry, I received an invalid response from Ollama. Raw response: {response.text[:200]}..."
-            
-        except requests.exceptions.RequestException as req_error:
-            return f"Sorry, I couldn't connect to Ollama: {str(req_error)}"
         except Exception as e:
-            return f"Sorry, I encountered an unexpected error with Ollama: {str(e)}"
+            return f"Error in '_get_model_response': {str(e)}"
+    
+    async def _get_error_feedback_response(self, error_context_prompt: str) -> str:
+        try:
+            response = requests.post(self.ollama_url, json={
+                "model": self.ollama_model,
+                "prompt": error_context_prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.3,
+                    "num_predict": 600
+                }
+            })
+
+            result = response.json()
+            return result.get("response")
+        
+        except Exception as e:
+            return f"Error in '_get_error_feedback_response': {str(e)}"
     
     async def chat(self, message: str, conversation_history: List[Dict], df: pd.DataFrame = None, model_type: str = "ollama") -> Dict:
         print(f"USER: {message}")
@@ -61,18 +68,30 @@ class ChatAgent:
             code = self._extract_code_from_response(response)
             print("------------- CODE EXECUTED -------------")
             print(code)
-            execution_result = self._execute_code_safely(code, df)
+            execution_result = self._execute_code(code, df)
             user_message = self._extract_user_message_from_response(response)
             
-            # If code execution failed, retry with error feedback
-            if not execution_result.get('success', False):
-                error_msg = execution_result.get('error', 'Unknown error')
-                print(f"EXECUTION ERROR: {error_msg}")
+            retry_count = 0
+            max_retries = 3
+            current_result = execution_result
+            current_response = response
+            current_code = code
+            current_user_message = user_message
+            
+            while not current_result.get('success', False) and retry_count < max_retries:
+                retry_count += 1
+                print(f"------------- RETRY ATTEMPT {retry_count}/{max_retries} -------------")
                 
-                # Build error context and retry
-                error_context = f"{context}\n\nUSER: {message}\nASSISTANT: {response}\n\nCODE EXECUTION ERROR: {error_msg}\n\nPlease fix the code and try again. The error above shows what went wrong."
+                try:
+                    error_msg = current_result['error']
+                    print(f"EXECUTION ERROR: {error_msg}")
+                except KeyError as e:
+                    error_msg = f"Error in 'chat()': execution_result missing 'error' key. Keys: {list(current_result.keys())} - {str(e)}"
+                    print(f"EXECUTION ERROR: {error_msg}")
                 
-                retry_response = await self._get_ollama_response(error_context + "\nASSISTANT:")
+                error_context = f"{context}\n\nUSER: {message}\nASSISTANT: {current_response}\n\nCODE EXECUTION ERROR: {error_msg}\n\nPlease fix the code and try again. The error above shows what went wrong."
+                
+                retry_response = await self._get_error_feedback_response(error_context + "\nASSISTANT:")
                 print("------------- RETRY RESPONSE -------------")
                 print(retry_response)
                 
@@ -80,35 +99,38 @@ class ChatAgent:
                     retry_code = self._extract_code_from_response(retry_response)
                     print("------------- RETRY CODE EXECUTED -------------")
                     print(retry_code)
-                    retry_execution_result = self._execute_code_safely(retry_code, df)
+                    retry_execution_result = self._execute_code(retry_code, df)
                     retry_user_message = self._extract_user_message_from_response(retry_response)
                     
-                    if not retry_execution_result.get('success', False):
-                        retry_error_msg = retry_execution_result.get('error', 'Unknown error')
-                        print(f"RETRY EXECUTION ERROR: {retry_error_msg}")
-                    
-                    return {
-                        'message': retry_user_message,
-                        'has_code': True,
-                        'execution_result': retry_execution_result,
-                        'raw_response': retry_response,
-                        'executed_code': retry_code,
-                        'retry_attempt': True
-                    }
+                    current_result = retry_execution_result
+                    current_response = retry_response
+                    current_code = retry_code
+                    current_user_message = retry_user_message
                 else:
                     return {
                         'message': retry_response,
                         'has_code': False,
                         'raw_response': retry_response,
-                        'retry_attempt': True
+                        'retry_attempt': True,
+                        'retry_count': retry_count
                     }
             
+            if not current_result.get('success', False):
+                try:
+                    final_error_msg = current_result['error']
+                    print(f"FINAL ERROR AFTER {retry_count} RETRIES: {final_error_msg}")
+                except KeyError as e:
+                    final_error_msg = f"Error in 'chat()': final result missing 'error' key. Keys: {list(current_result.keys())} - {str(e)}"
+                    print(f"FINAL ERROR AFTER {retry_count} RETRIES: {final_error_msg}")
+            
             return {
-                'message': user_message,
+                'message': current_user_message,
                 'has_code': True,
-                'execution_result': execution_result,
-                'raw_response': response,
-                'executed_code': code
+                'execution_result': current_result,
+                'raw_response': current_response,
+                'executed_code': current_code,
+                'retry_attempt': retry_count > 0,
+                'retry_count': retry_count
             }
         else:
             return {
@@ -117,8 +139,6 @@ class ChatAgent:
                 'raw_response': response,
             }
             
-
-    
     def _build_conversation_context(self, history: List[Dict], df: pd.DataFrame) -> str:
         df_info = self._get_dataframe_info(df) if df is not None else "No data loaded"
         
@@ -176,7 +196,6 @@ CONVERSATION HISTORY:
     
     def _extract_code_from_response(self, response: str) -> str:
         try:
-            # Extract all code blocks and combine them
             code_blocks = []
             start_pos = 0
             
@@ -196,10 +215,9 @@ CONVERSATION HISTORY:
                 
                 start_pos = end + len("</execute_code>")
             
-            # Combine all code blocks with newlines
             return "\n".join(code_blocks) if code_blocks else ""
-        except:
-            return ""
+        except Exception as e:
+            return f"Error in '_extract_code_from_response': {str(e)}"
     
     def _extract_user_message_from_response(self, response: str) -> str:
         try:
@@ -208,10 +226,10 @@ CONVERSATION HISTORY:
                 return response[:code_start].strip()
             
             return response
-        except:
-            return response
+        except Exception as e:
+            return f"Error in '_extract_user_message_from_response': {str(e)}"
 
-    def _execute_code_safely(self, code: str, df: pd.DataFrame) -> Dict:
+    def _execute_code(self, code: str, df: pd.DataFrame) -> Dict:
         if not code or df is None:
             return {'success': False, 'error': 'No code or dataframe provided'}
         
@@ -238,15 +256,13 @@ CONVERSATION HISTORY:
         except Exception as e:
             return {
                 'success': False,
-                'error': str(e),
+                'error': f"Error in '_execute_code': {str(e)}",
                 'dataframe': df
             }
     
     def _get_dataframe_info(self, df: pd.DataFrame) -> str:
         if df is None:
             return "No dataframe available"
-        
-
         
         dtypes_dict = {}
         for col, dtype in df.dtypes.items():

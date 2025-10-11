@@ -20,6 +20,27 @@ export default function Home(){
     let PAGE_SIZE = 50
     let CURRENT_PAGE = 1
     let parquetReady = false
+    // Dataset change/version tracking to prevent duplicate operation runs
+    let DATA_VERSION = 0
+
+    function bumpDataVersion(){
+      DATA_VERSION += 1
+    }
+    function markAllStepsStale(){
+      PIPELINE.forEach(s => { s._lastRunVersion = undefined })
+    }
+    function markAllExceptIdxStale(idx){
+      PIPELINE.forEach((s, i) => { if (i !== idx) s._lastRunVersion = undefined })
+    }
+
+    // Broadcast pipeline state so other pages/components can reflect status (e.g., DocumentQA)
+    function broadcastPipeline(){
+      try{
+        const state = { pipeline: clone(PIPELINE), dataVersion: DATA_VERSION }
+        window.__PIPELINE_STATE__ = state
+        window.dispatchEvent(new CustomEvent('pipeline-updated', { detail: state }))
+      } catch(e){ /* no-op */ }
+    }
 
     // History (Undo/Redo)
     let HISTORY = []
@@ -54,6 +75,8 @@ export default function Home(){
       FUTURE.push(snapshot())
       EDITED = clone(prev.rows)
       COLUMNS = clone(prev.columns)
+      bumpDataVersion();
+      markAllStepsStale();
       renderTable(); updateHistoryUI();
       showToast(`Undid 1 change • remaining: ${HISTORY.length}`)
     }
@@ -64,6 +87,8 @@ export default function Home(){
       HISTORY.push(snapshot())
       EDITED = clone(next.rows)
       COLUMNS = clone(next.columns)
+      bumpDataVersion();
+      markAllStepsStale();
       renderTable(); updateHistoryUI();
       showToast(`Redid 1 change • remaining: ${FUTURE.length}`)
     }
@@ -209,7 +234,7 @@ export default function Home(){
           const input = document.createElement('input')
           input.value = r[c] ?? ''
           input.className = 'w-full bg-transparent outline-none text-sm'
-          input.addEventListener('change', (e)=> { pushHistory(); r[c] = e.target.value; updateHistoryUI() })
+          input.addEventListener('change', (e)=> { pushHistory(); r[c] = e.target.value; bumpDataVersion(); markAllStepsStale(); updateHistoryUI() })
           td.appendChild(input)
           tr.appendChild(td)
         })
@@ -300,6 +325,7 @@ export default function Home(){
         return
       }
       PIPELINE = []
+      bumpDataVersion()
       renderTable()
       renderPipeline()
     }
@@ -319,7 +345,7 @@ export default function Home(){
       CURRENT_PAGE = 1; renderTable()
     })
 
-    clearEditsBtn.addEventListener('click', () => { pushHistory(); EDITED = clone(ORIGINAL); renderTable() })
+    clearEditsBtn.addEventListener('click', () => { pushHistory(); EDITED = clone(ORIGINAL); bumpDataVersion(); markAllStepsStale(); renderTable() })
 
     // Paging
     prevBtn.addEventListener('click', () => { CURRENT_PAGE = Math.max(1, CURRENT_PAGE - 1); renderTable() })
@@ -351,26 +377,101 @@ export default function Home(){
     // Pipeline
     const pipelineListEl = pipelineList
 
+    function runSingleStep(idx){
+      const step = PIPELINE[idx]
+      if (!step) return
+      // Prevent duplicate run if already applied on current dataset version
+      if (step._lastRunVersion === DATA_VERSION){
+        showToast('This operation has already been applied.')
+        return
+      }
+      // Mark running for spinner UI
+      step._running = true
+      renderPipeline(); broadcastPipeline()
+      // Defer execution to allow spinner to render
+      setTimeout(() => {
+        try {
+          // Execute only this specific step on current EDITED data
+          pushHistory()
+          EDITED = applyStep(EDITED, step)
+          const prevVersion = DATA_VERSION
+          bumpDataVersion()
+          // Mark this step as applied for the new version
+          step._lastRunVersion = DATA_VERSION
+          // Preserve applied status for other steps that were already applied on prevVersion
+          PIPELINE.forEach((s, i) => {
+            if (i !== idx && s._lastRunVersion === prevVersion) {
+              s._lastRunVersion = DATA_VERSION
+            }
+          })
+          renderTable()
+        } finally {
+          step._running = false
+          renderPipeline(); broadcastPipeline()
+        }
+      }, 0)
+    }
+
     function renderPipeline(){
       pipelineListEl.innerHTML = ''
       PIPELINE.forEach((step, idx) => {
         const li = document.createElement('li')
-        li.className = 'border border-slate-200 rounded-xl p-2 flex items-start gap-2'
+        li.className = 'border border-slate-200 rounded-xl px-3 py-2 flex items-center justify-between shadow-sm'
+
+        // Label: left-aligned, vertically centered
         const label = document.createElement('div')
-        label.className = 'text-xs flex-1'
+        label.className = 'text-xs text-slate-700 pr-3 flex-1'
         label.textContent = `${idx+1}. ${step.op} on ${step.col}`
-        const btns = document.createElement('div')
-        btns.className = 'flex items-center gap-2'
+
+        // Right-side icon cluster: Play, Checkbox, Delete
+        const controls = document.createElement('div')
+        controls.className = 'flex items-center gap-2'
+
+        // Play (with spinner while running)
+        const playBtn = document.createElement('button')
+        playBtn.className = 'shrink-0 p-1.5 rounded-md hover:bg-emerald-50 text-emerald-700 hover:text-emerald-800 transition-colors hover:scale-105 transition-transform'
+        const alreadyApplied = step._lastRunVersion === DATA_VERSION
+        playBtn.setAttribute('title', alreadyApplied ? 'Already applied' : 'Run this step')
+        if (step._running){
+          const spinner = document.createElement('div')
+          spinner.className = 'h-4 w-4 border-2 border-slate-300 border-t-emerald-600 rounded-full animate-spin'
+          playBtn.appendChild(spinner)
+          playBtn.disabled = true
+          playBtn.classList.add('opacity-70','cursor-not-allowed')
+        } else if (alreadyApplied){
+          // Show a subtle checkmark and disable button
+          playBtn.innerHTML = '<svg viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4 text-slate-400"><path d="M10 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16Zm3.707-9.293a1 1 0 0 0-1.414-1.414L9 10.586 7.707 9.293a1 1 0 1 0-1.414 1.414l2 2a1 1 0 0 0 1.414 0l4-4Z"/></svg>'
+          playBtn.disabled = true
+          playBtn.classList.add('opacity-60','cursor-not-allowed')
+        } else {
+          playBtn.innerHTML = '<svg viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4"><path d="M6 4.5v11l9-5.5-9-5.5z"/></svg>'
+          playBtn.addEventListener('click', () => runSingleStep(idx))
+        }
+
+        // Checkbox
         const onoff = document.createElement('input')
         onoff.type = 'checkbox'
         onoff.checked = step.enabled !== false
+        onoff.className = 'rounded cursor-pointer'
+        onoff.setAttribute('title', 'Enable/Disable step')
         onoff.addEventListener('change', () => { step.enabled = onoff.checked })
+
+        // Delete: modern rounded trash icon with hover effect
         const del = document.createElement('button')
-        del.textContent = 'Delete'
-        del.className = 'px-2 py-1 rounded bg-slate-100 text-xs'
+        del.className = 'p-1.5 rounded-md hover:bg-slate-100 text-slate-500 hover:text-red-600 transition-colors hover:scale-105 transition-transform'
+        del.setAttribute('title', 'Delete step')
+        // Heroicons (rounded-ish) trash icon look-alike
+        del.innerHTML = '<svg viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4"><path d="M7.5 3a1 1 0 0 0-.894.553L6.276 4H4a1 1 0 1 0 0 2h.293l.823 10.074A2.5 2.5 0 0 0 7.608 18h4.784a2.5 2.5 0 0 0 2.492-1.926L15.707 6H16a1 1 0 1 0 0-2h-2.276l-.33-.447A1 1 0 0 0 12.5 3h-5zm1.75 5a.75.75 0 0 1 .75.75v6.5a.75.75 0 0 1-1.5 0v-6.5a.75.75 0 0 1 .75-.75zm4 0a.75.75 0 0 1 .75.75v6.5a.75.75 0 0 1-1.5 0v-6.5a.75.75 0 0 1 .75-.75zM8.5 5h3a1 1 0 0 1 .8.4l.5.6H7.2l.5-.6a1 1 0 0 1 .8-.4z"/></svg>'
         del.addEventListener('click', () => { PIPELINE.splice(idx,1); renderPipeline() })
-        btns.appendChild(onoff); btns.appendChild(del)
-        li.appendChild(label); li.appendChild(btns)
+
+        // Assemble right cluster
+        controls.appendChild(playBtn)
+        controls.appendChild(onoff)
+        controls.appendChild(del)
+
+        // Compose row
+        li.appendChild(label)
+        li.appendChild(controls)
         pipelineListEl.appendChild(li)
       })
     }
@@ -459,23 +560,65 @@ export default function Home(){
       if (!COLUMNS.length) return
       // Optional: respect "Enable" master toggle if present
       if (enablePipeline && !enablePipeline.checked) return
-      pushHistory(); applyPipeline(); renderTable();
+      // Determine enabled steps and set running flags
+      const enabledSteps = PIPELINE.filter(s => s.enabled !== false)
+      // If everything selected is already applied for this DATA_VERSION, no-op
+      if (enabledSteps.length > 0 && enabledSteps.every(s => s._lastRunVersion === DATA_VERSION)){
+        showToast('All selected operations are already applied.')
+        return
+      }
+      PIPELINE.forEach(s => { s._running = enabledSteps.includes(s) })
+      renderPipeline(); broadcastPipeline()
+
+      // Execute synchronously for now (can be async later)
+      pushHistory()
+      EDITED = clone(ORIGINAL)
+      enabledSteps.forEach(step => { EDITED = applyStep(EDITED, step) })
+      bumpDataVersion()
+      // All steps become stale, then mark executed ones as applied for current version
+      markAllStepsStale()
+      enabledSteps.forEach(step => { step._lastRunVersion = DATA_VERSION })
+      // Reset running flags
+      PIPELINE.forEach(s => { s._running = false })
+      renderTable(); renderPipeline(); broadcastPipeline()
     }
 
     // New: run all operations regardless of enabled flags
     function runAllOperations(){
       if (!COLUMNS.length) return
+      // If all steps are already applied for this DATA_VERSION, no-op
+      if (PIPELINE.length > 0 && PIPELINE.every(s => s._lastRunVersion === DATA_VERSION)){
+        showToast('All operations are already applied.')
+        return
+      }
+      // Mark all as running
+      PIPELINE.forEach(s => { s._running = true })
+      renderPipeline(); broadcastPipeline()
+
       pushHistory()
       EDITED = clone(ORIGINAL)
       const steps = PIPELINE.slice()
       steps.forEach(step => { EDITED = applyStep(EDITED, step) })
-      renderTable();
+      bumpDataVersion()
+      // All steps become stale, then mark all as applied for current version
+      markAllStepsStale()
+      PIPELINE.forEach(step => { step._lastRunVersion = DATA_VERSION })
+      // Reset running flags
+      PIPELINE.forEach(s => { s._running = false })
+      renderTable(); renderPipeline(); broadcastPipeline()
     }
 
     // Wire buttons
     if (runSelectedBtn) runSelectedBtn.addEventListener('click', runSelectedOperations)
     if (runAllBtn) runAllBtn.addEventListener('click', runAllOperations)
-    addStepBtn.addEventListener('click', () => { if (!COLUMNS.length) return; const step = { op: tOp.value, col: tCol.value, params: collectParams(), enabled: true }; addStep(step) })
+    addStepBtn.addEventListener('click', () => {
+      if (!COLUMNS.length) return;
+      const step = { op: tOp.value, col: tCol.value, params: collectParams(), enabled: true };
+      addStep(step)
+      // Adding a transformation should mark previous executions as stale
+      markAllStepsStale()
+      renderPipeline()
+    })
 
     // Export
     function downloadString(str, type, filename){ const blob = new Blob([str], { type }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url) },0) }
@@ -523,6 +666,8 @@ export default function Home(){
       if (Array.isArray(data.columns)) COLUMNS = data.columns
       if (Array.isArray(data.pipeline)) PIPELINE = data.pipeline
       HISTORY = []; FUTURE = []; updateHistoryUI()
+      bumpDataVersion();
+      markAllStepsStale();
       renderPipeline(); renderTable()
     })
 

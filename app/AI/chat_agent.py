@@ -14,7 +14,7 @@ class ConversationState:
 class ChatAgent:
     def __init__(self):
         self.ollama_url = "http://localhost:11434/api/generate"
-        self.ollama_model = "deepseek-r1:7b"
+        self.ollama_model = "qwen3-coder:30b"
         self.code_executor = CodeExecutor()
         
     async def _get_model_response(self, context: str, message: str, model_type: str = "ollama") -> str:
@@ -135,6 +135,13 @@ class ChatAgent:
 DATA INFO:
 {df_info}
 
+IMPORTANT RULES:
+- Look at the current column names and data state before writing code
+- Only perform operations that are actually needed
+- If a column already exists with the right name, don't rename it again
+- If data is already in the right format, don't transform it again
+- Check the current state first, then do only what's missing
+
 RESPONSE STYLE:
 - Start with a friendly acknowledgment like "Sure!" or "I'll help you with that"
 - Give a brief, simple explanation of what you're doing
@@ -146,13 +153,14 @@ EXAMPLES:
 User: "Rename Ledger Name to Ledger"
 Response: "Sure! I'll rename that column for you."
 <execute_code>
-df = df.rename(columns={'Ledger Name': 'Ledger'})
+df = df.rename(columns={{'Ledger Name': 'Ledger'}})
 </execute_code>
 
-User: "Concatenate first name and last name"
-Response: "I'll combine those into a full name column."
+User: "Move Ledger column to the front" (when Ledger column already exists)
+Response: "I'll move the Ledger column to the front for you."
 <execute_code>
-df['Full Name'] = df['First Name'].astype(str) + ' ' + df['Last Name'].astype(str)
+cols = ['Ledger'] + [col for col in df.columns if col != 'Ledger']
+df = df[cols]
 </execute_code>
 
 User: "Clean the email column"
@@ -176,11 +184,28 @@ CONVERSATION HISTORY:
     
     def _extract_code_from_response(self, response: str) -> str:
         try:
-            if "<execute_code>" in response:
-                start = response.find("<execute_code>") + len("<execute_code>")
-                end = response.find("</execute_code>")
-                return response[start:end].strip()
-            return ""
+            # Extract all code blocks and combine them
+            code_blocks = []
+            start_pos = 0
+            
+            while True:
+                start = response.find("<execute_code>", start_pos)
+                if start == -1:
+                    break
+                    
+                start += len("<execute_code>")
+                end = response.find("</execute_code>", start)
+                if end == -1:
+                    break
+                    
+                code_block = response[start:end].strip()
+                if code_block:
+                    code_blocks.append(code_block)
+                
+                start_pos = end + len("</execute_code>")
+            
+            # Combine all code blocks with newlines
+            return "\n".join(code_blocks) if code_blocks else ""
         except:
             return ""
     

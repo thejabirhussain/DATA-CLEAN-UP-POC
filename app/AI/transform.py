@@ -14,6 +14,7 @@ class CoderAgent:
         return await self.generate_code(instruction, df, model_type)
     
     async def generate_code(self, instruction: str, df: pd.DataFrame, model_type: str = "ollama") -> str:
+        print(f"USER: {instruction}")
         df_info = self._get_dataframe_info(df)
         
         system_prompt = f"""You are a Python code generator for pandas DataFrame operations.
@@ -26,7 +27,7 @@ DATAFRAME INFO:
 {df_info['sample_data']}
 
 RULES:
-1. Generate ONLY executable Python code
+1. Generate ONLY executable Python code wrapped in <execute_code> tags
 2. The DataFrame is available as 'df'
 3. Modify 'df' in-place or reassign it
 4. These modules are already imported and available: pandas (as pd), numpy (as np), re, datetime, json, math
@@ -37,18 +38,18 @@ RULES:
 EXAMPLES:
 
 User: "Concatenate first name and last name columns"
-Code:
-```python
+Response:
+<execute_code>
 df['Full Name'] = df['First Name'].astype(str) + ' ' + df['Last Name'].astype(str)
-```
+</execute_code>
 
 User: "Remove rows where email is invalid"
-Code:
-```python
+Response:
+<execute_code>
 email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}'
 valid_emails = df['Email'].astype(str).str.match(email_pattern, na=False)
 df = df[valid_emails].reset_index(drop=True)
-```
+</execute_code>
 
 Generate code for: "{instruction}"
 """
@@ -70,13 +71,13 @@ Generate code for: "{instruction}"
             
             result = response.json()
             generated_code = result.get("response", "")
-            if "```python" in generated_code:
-                code_start = generated_code.find("```python") + 9
-                code_end = generated_code.find("```", code_start)
-                generated_code = generated_code[code_start:code_end].strip()
-            elif "```" in generated_code:
-                code_start = generated_code.find("```") + 3
-                code_end = generated_code.find("```", code_start)
+            print("------------- LLM RESPONSE -------------")
+            print(generated_code)
+            
+            # Extract code from <execute_code> tags
+            if "<execute_code>" in generated_code:
+                code_start = generated_code.find("<execute_code>") + len("<execute_code>")
+                code_end = generated_code.find("</execute_code>")
                 generated_code = generated_code[code_start:code_end].strip()
             
             return generated_code

@@ -550,13 +550,7 @@
                             message = `Processing completed in ${executionTime}s! ${result.message || 'Operation successful'}`;
                         }
                         
-                        if (result.execution_log && result.execution_log.includes('Execution time:')) {
-                            const backendTimeMatch = result.execution_log.match(/Execution time: ([\d.]+)s/);
-                            if (backendTimeMatch) {
-                                const backendTime = backendTimeMatch[1];
-                                message += ` (Backend: ${backendTime}s)`;
-                            }
-                        }
+
                         
                         showStatus('transformStatus', message, 'success');
                         
@@ -698,13 +692,7 @@
                         message = `Processing completed in ${executionTime}s! ${result.message || 'Operation successful'}`;
                     }
                     
-                    if (result.execution_log && result.execution_log.includes('Execution time:')) {
-                        const backendTimeMatch = result.execution_log.match(/Execution time: ([\d.]+)s/);
-                        if (backendTimeMatch) {
-                            const backendTime = backendTimeMatch[1];
-                            message += ` (Backend: ${backendTime}s)`;
-                        }
-                    }
+
                     
                     showStatus('transformStatus', message, 'success');
                     

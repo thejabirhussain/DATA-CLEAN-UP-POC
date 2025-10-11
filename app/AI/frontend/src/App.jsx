@@ -170,10 +170,7 @@ export default function App() {
           } else {
             msg = `Processing completed in ${executionTime}s! ${result.message || 'Operation successful'}`
           }
-          if (result.execution_log && result.execution_log.includes('Execution time:')) {
-            const match = result.execution_log.match(/Execution time: ([\d.]+)s/)
-            if (match) msg += ` (Backend: ${match[1]}s)`
-          }
+
           setTransformStatus({ message: msg, type: 'success' })
           setInstruction('')
           setSessionId(null)
@@ -242,10 +239,7 @@ export default function App() {
         } else {
           msg = `Processing completed in ${executionTime}s! ${result.message || 'Operation successful'}`
         }
-        if (result.execution_log && result.execution_log.includes('Execution time:')) {
-          const match = result.execution_log.match(/Execution time: ([\d.]+)s/)
-          if (match) msg += ` (Backend: ${match[1]}s)`
-        }
+
         setTransformStatus({ message: msg, type: 'success' })
         setSessionId(null)
         setFollowupVisible(false)

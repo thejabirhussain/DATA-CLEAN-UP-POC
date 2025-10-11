@@ -258,9 +258,7 @@ export default function Prep(){
             } else {
               msg = `Processing completed in ${executionTime}s! ${result.message || 'Operation successful'}`
             }
-            if (result.execution_log && result.execution_log.includes('Execution time:')){
-              const m = result.execution_log.match(/Execution time: ([\d.]+)s/); if (m) msg += ` (Backend: ${m[1]}s)`
-            }
+
             setTransformStatus(msg, 'success')
             if (instructionEl) instructionEl.value = ''
             sessionId = null
@@ -297,9 +295,7 @@ export default function Prep(){
             msg = `Transformation completed in ${executionTime}s! Result: ${result.result_shape[0]} rows × ${result.result_shape[1]} columns`
             await loadDataPage(1); HISTORY = []; FUTURE = []; updateHistoryInfo()
           } else { msg = `Processing completed in ${executionTime}s! ${result.message || 'Operation successful'}` }
-          if (result.execution_log && result.execution_log.includes('Execution time:')){
-            const m = result.execution_log.match(/Execution time: ([\d.]+)s/); if (m) msg += ` (Backend: ${m[1]}s)`
-          }
+
           setTransformStatus(msg, 'success'); sessionId = null; if (followupSection){ followupSection.classList.add('hidden') }; if (followupQsEl) followupQsEl.innerHTML = ''
         } else { setTransformStatus(`Follow-up processing failed: ${result.error}`, 'error') }
       } catch(e){ setTransformStatus(`Follow-up error: ${e.message}`, 'error') }

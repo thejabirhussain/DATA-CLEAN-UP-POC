@@ -1,9 +1,6 @@
 import requests
 import pandas as pd
 from typing import Dict, Any
-from dotenv import load_dotenv
-
-load_dotenv()
 
 class CoderAgent:
     def __init__(self):
@@ -93,25 +90,3 @@ Generate code for: "{instruction}"
             'sample_data': df.head(3).to_string()
         }
     
-    async def explain_code(self, code: str) -> str:
-        try:
-            prompt = f"Explain what this pandas code does in simple terms:\n\n{code}"
-            
-            response = requests.post(self.ollama_url, json={
-                "model": self.model,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.1,
-                    "num_predict": 200
-                }
-            })
-            
-            if response.status_code != 200:
-                return f"Could not explain code: API error {response.status_code}"
-            
-            result = response.json()
-            return result.get("response", "No explanation available")
-            
-        except Exception as e:
-            return f"Could not explain code: {str(e)}"

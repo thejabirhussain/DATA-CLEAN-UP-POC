@@ -17,7 +17,7 @@ from werkzeug.utils import secure_filename
 
 pytesseract.pytesseract.tesseract_cmd = r"C:\dev\tesseract\tesseract.exe"
 
-app = FastAPI(title="Excel NLP Transformer", version="1.0.0")
+app = FastAPI(title="Excel AI", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,

@@ -54,7 +54,6 @@ class ChatAgent:
         context = self._build_conversation_context(conversation_history, df)
         
         response = await self._get_model_response(context, message, model_type)
-        response = self._strip_deepseek_think(response)
         print("------------- RAW MODEL RESPONSE -------------")
         print(response)
         
@@ -74,7 +73,6 @@ class ChatAgent:
                 error_context = f"{context}\n\nUSER: {message}\nASSISTANT: {response}\n\nCODE EXECUTION ERROR: {error_msg}\n\nPlease fix the code and try again. The error above shows what went wrong."
                 
                 retry_response = await self._get_ollama_response(error_context + "\nASSISTANT:")
-                retry_response = self._strip_deepseek_think(retry_response)
                 print("------------- RETRY RESPONSE -------------")
                 print(retry_response)
                 
@@ -119,13 +117,7 @@ class ChatAgent:
                 'raw_response': response,
             }
             
-    def _strip_deepseek_think(self, text: str) -> str:
-        try:
-            if not text:
-                return text
-            return re.sub(r"<\s*think\s*>[\s\S]*?<\s*/\s*think\s*>", "", text, flags=re.IGNORECASE)
-        except Exception:
-            return text
+
     
     def _build_conversation_context(self, history: List[Dict], df: pd.DataFrame) -> str:
         df_info = self._get_dataframe_info(df) if df is not None else "No data loaded"

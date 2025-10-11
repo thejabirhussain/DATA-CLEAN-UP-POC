@@ -399,4 +399,10 @@ async def read_root():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import logging
+    
+    # Hide uvicorn logs
+    logging.getLogger("uvicorn").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")

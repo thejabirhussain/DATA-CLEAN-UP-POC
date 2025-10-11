@@ -14,7 +14,7 @@ class ConversationState:
 class ChatAgent:
     def __init__(self):
         self.ollama_url = "http://localhost:11434/api/generate"
-        self.ollama_model = "deepseek-r1:32b"
+        self.ollama_model = "deepseek-r1:7b"
         self.code_executor = CodeExecutor()
         
     async def _get_model_response(self, context: str, message: str, model_type: str = "ollama") -> str:
@@ -29,7 +29,7 @@ class ChatAgent:
                 "stream": False,
                 "options": {
                     "temperature": 0.3,
-                    "num_predict": 1000
+                    "num_predict": 600
                 }
             })
             
@@ -49,6 +49,8 @@ class ChatAgent:
             return f"Sorry, I encountered an unexpected error with Ollama: {str(e)}"
     
     async def chat(self, message: str, conversation_history: List[Dict], df: pd.DataFrame = None, model_type: str = "ollama") -> Dict:
+        print(f"USER: {message}")
+        
         context = self._build_conversation_context(conversation_history, df)
         
         response = await self._get_model_response(context, message, model_type)
@@ -62,6 +64,46 @@ class ChatAgent:
             print(code)
             execution_result = self._execute_code_safely(code, df)
             user_message = self._extract_user_message_from_response(response)
+            
+            # If code execution failed, retry with error feedback
+            if not execution_result.get('success', False):
+                error_msg = execution_result.get('error', 'Unknown error')
+                print(f"EXECUTION ERROR: {error_msg}")
+                
+                # Build error context and retry
+                error_context = f"{context}\n\nUSER: {message}\nASSISTANT: {response}\n\nCODE EXECUTION ERROR: {error_msg}\n\nPlease fix the code and try again. The error above shows what went wrong."
+                
+                retry_response = await self._get_ollama_response(error_context + "\nASSISTANT:")
+                retry_response = self._strip_deepseek_think(retry_response)
+                print("------------- RETRY RESPONSE -------------")
+                print(retry_response)
+                
+                if self._contains_code_execution(retry_response):
+                    retry_code = self._extract_code_from_response(retry_response)
+                    print("------------- RETRY CODE EXECUTED -------------")
+                    print(retry_code)
+                    retry_execution_result = self._execute_code_safely(retry_code, df)
+                    retry_user_message = self._extract_user_message_from_response(retry_response)
+                    
+                    if not retry_execution_result.get('success', False):
+                        retry_error_msg = retry_execution_result.get('error', 'Unknown error')
+                        print(f"RETRY EXECUTION ERROR: {retry_error_msg}")
+                    
+                    return {
+                        'message': retry_user_message,
+                        'has_code': True,
+                        'execution_result': retry_execution_result,
+                        'raw_response': retry_response,
+                        'executed_code': retry_code,
+                        'retry_attempt': True
+                    }
+                else:
+                    return {
+                        'message': retry_response,
+                        'has_code': False,
+                        'raw_response': retry_response,
+                        'retry_attempt': True
+                    }
             
             return {
                 'message': user_message,
@@ -88,55 +130,33 @@ class ChatAgent:
     def _build_conversation_context(self, history: List[Dict], df: pd.DataFrame) -> str:
         df_info = self._get_dataframe_info(df) if df is not None else "No data loaded"
         
-        system_prompt = f"""You are a conversational data analyst assistant helping a business user with their data.
+        system_prompt = f"""You are a friendly data assistant. Be conversational and helpful.
 
-CURRENT DATAFRAME INFO:
+DATA INFO:
 {df_info}
 
-CONVERSATION RULES:
-1. Be conversational and helpful - you can chat about data, answer questions, and perform transformations
-2. When the user gives you MULTIPLE tasks or steps in one message, ask for clarification before executing
-3. Break down multi-step requests and ask if they want all steps done at once or one by one
-4. For single, clear data transformations, provide a brief business explanation then execute code
-5. For data transformations, wrap your code in <execute_code> tags
-
-CODE GENERATION RULES:
-1. Generate ONLY executable Python code
-2. The DataFrame is available as 'df'
-3. Modify 'df' in-place or reassign it
-4. These modules are already imported and available: pandas (as pd), numpy (as np), re, datetime, json, math
-5. DO NOT include any import statements - all modules are pre-loaded
-6. No file I/O operations
-7. Do not use .head(), .describe(), .info(), print() - just modify the data
+RESPONSE STYLE:
+- Start with a friendly acknowledgment like "Sure!" or "I'll help you with that"
+- Give a brief, simple explanation of what you're doing
+- Keep responses short and user-friendly
+- Use <execute_code> tags for data transformations
 
 EXAMPLES:
 
-User: "Concatenate first name and last name columns"
-Response: "I'll combine the first and last name columns into a single full name column for you."
+User: "Rename Ledger Name to Ledger"
+Response: "Sure! I'll rename that column for you."
 <execute_code>
-df['Full Name'] = df['First Name'].astype(str) + ' ' + df['Last Name'].astype(str)
+df = df.rename(columns={'Ledger Name': 'Ledger'})
 </execute_code>
 
-User: "1) Create a full name column 2) Move it to the front 3) Delete the old columns"
-Response: "I'll create the full name column, move it to the front, and remove the old columns all in one go."
+User: "Concatenate first name and last name"
+Response: "I'll combine those into a full name column."
 <execute_code>
 df['Full Name'] = df['First Name'].astype(str) + ' ' + df['Last Name'].astype(str)
-cols = ['Full Name'] + [col for col in df.columns if col not in ['Full Name', 'First Name', 'Last Name']]
-df = df[cols]
 </execute_code>
 
 User: "Clean the email column"
-Response: "I'd be happy to clean the email column for you. Could you clarify what type of cleaning you need? For example:
-- Remove extra spaces and trim whitespace?
-- Convert to lowercase for consistency?
-- Remove invalid email formats?
-- Something else specific?"
-
-User: "Remove extra spaces and convert to lowercase"
-Response: "I'll clean the email column by removing extra spaces and converting everything to lowercase."
-<execute_code>
-df['Email'] = df['Email'].astype(str).str.strip().str.lower()
-</execute_code>
+Response: "What kind of cleaning do you need? Remove spaces, fix formatting, or something else?"
 
 CONVERSATION HISTORY:
 """
@@ -185,7 +205,6 @@ CONVERSATION HISTORY:
                                  ['error:', 'failed', 'traceback', 'exception', 'keyerror'])
             
             if execution_failed:
-                print("Code execution error")
                 return {
                     'success': False,
                     'error': execution_log,
@@ -200,7 +219,6 @@ CONVERSATION HISTORY:
                 'new_shape': list(result_df.shape)
             }
         except Exception as e:
-            print("Code execution error")
             return {
                 'success': False,
                 'error': str(e),

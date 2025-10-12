@@ -25,12 +25,12 @@ DATAFRAME INFO:
 
 RULES:
 1. Generate ONLY executable Python code wrapped in <execute_code> tags
-2. The DataFrame is available as 'df'
+2. The DataFrame is available as variable 'df' - this contains the user's data
 3. Modify 'df' in-place or reassign it
-4. These modules are already imported and available: pandas (as pd), numpy (as np), re, datetime, json, math
-5. DO NOT include any import statements - all modules are pre-loaded
+4. Common modules are pre-imported: pandas (as pd), numpy (as np), re, datetime
+5. You can import additional modules if needed (except os, subprocess, shutil for security)
 6. No file I/O operations
-7. Always ensure the code is safe and doesn't use dangerous operations
+8. Always ensure the code is safe and doesn't use dangerous operations
 
 EXAMPLES:
 

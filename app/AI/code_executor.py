@@ -9,17 +9,6 @@ from contextlib import redirect_stdout, redirect_stderr
 
 class CodeExecutor:
     def __init__(self):
-        self.allowed_modules = {
-            'pandas': pd,
-            'numpy': np,
-            'np': np,
-            'pd': pd,
-            're': re,
-            'math': __import__('math'),
-            'datetime': __import__('datetime'),
-            'json': __import__('json')
-        }
-        
         self.security_validator = EnhancedSecurityValidator()
         
     
@@ -48,16 +37,25 @@ class CodeExecutor:
     
     
     def _execute_code(self, code: str, df: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
-        safe_globals = self._create_safe_globals()
-        safe_locals = {'df': df.copy()}
+        # Allow full Python execution with common imports and df in locals
+        execution_globals = {
+            '__builtins__': __builtins__,
+            'pandas': pd,
+            'pd': pd,
+            'numpy': np,
+            'np': np,
+            're': re,
+            'datetime': __import__('datetime')
+        }
+        execution_locals = {'df': df.copy()}
         
         stdout_capture = io.StringIO()
         stderr_capture = io.StringIO()
         
         with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-            exec(code, safe_globals, safe_locals)
+            exec(code, execution_globals, execution_locals)
         
-        result = safe_locals.get('df', df)
+        result = execution_locals.get('df', df)
         
         stdout_content = stdout_capture.getvalue()
         stderr_content = stderr_capture.getvalue()
@@ -73,80 +71,23 @@ class CodeExecutor:
         
         return result, execution_log
     
-    def _create_safe_globals(self) -> Dict[str, Any]:
-        safe_globals = {
-            '__builtins__': {
-                'len': len, 'str': str, 'int': int, 'float': float, 'bool': bool,
-                'list': list, 'dict': dict, 'tuple': tuple, 'set': set,
-                'range': range, 'enumerate': enumerate, 'zip': zip,
-                'map': map, 'filter': filter, 'sorted': sorted,
-                'sum': sum, 'min': min, 'max': max, 'abs': abs, 'round': round,
-                'print': print, 'type': type, 'isinstance': isinstance,
-                'hasattr': hasattr, 'getattr': getattr, 'setattr': setattr,
-                
-                'any': any, 'all': all, 'chr': chr, 'ord': ord,
-                'hex': hex, 'oct': oct, 'bin': bin, 'pow': pow,
-                'divmod': divmod, 'reversed': reversed,
-                
-                'Exception': Exception, 'ValueError': ValueError,
-                'TypeError': TypeError, 'KeyError': KeyError,
-                'IndexError': IndexError, 'AttributeError': AttributeError
-            }
-        }
-        
-        safe_globals.update(self.allowed_modules)
-        
-        return safe_globals
+
     
 class EnhancedSecurityValidator:
     
     DANGEROUS_PATTERNS = [
-
+        # Only block OS-related operations that could harm the computer
         (r'import\s+os', "OS module import"),
-        (r'import\s+sys', "System module import"),
-        (r'import\s+subprocess', "Subprocess module import"),
-        (r'import\s+shutil', "Shutil module import"),
         (r'from\s+os', "OS module import"),
-        (r'from\s+sys', "System module import"),
+        (r'import\s+subprocess', "Subprocess module import"),
         (r'from\s+subprocess', "Subprocess module import"),
-        
-        (r'__import__', "Dynamic import"),
-        (r'eval\s*\(', "Eval function"),
-        (r'exec\s*\(', "Exec function"),
-        (r'compile\s*\(', "Compile function"),
-        
-        (r'open\s*\(', "File open operation"),
-        (r'file\s*\(', "File operation"),
-        (r'\.read\s*\(', "File read operation"),
-        (r'\.write\s*\(', "File write operation"),
-        
-        (r'input\s*\(', "Input function"),
-        (r'raw_input\s*\(', "Raw input function"),
-        
-        (r'globals\s*\(', "Globals access"),
-        (r'locals\s*\(', "Locals access"),
-        (r'vars\s*\(', "Vars function"),
-        (r'dir\s*\(', "Dir function"),
-        
-        (r'delattr', "Delattr function"),
-        (r'setattr.*__', "Setattr with dunder attributes"),
-        (r'getattr.*__', "Getattr with dunder attributes"),
+        (r'import\s+shutil', "Shutil module import"),
+        (r'from\s+shutil', "Shutil module import"),
         
         (r'\.system\s*\(', "System call"),
         (r'\.popen\s*\(', "Popen call"),
         (r'\.call\s*\(', "Call function"),
         (r'\.run\s*\(', "Run function"),
-        
-        (r'import\s+urllib', "URL library import"),
-        (r'import\s+requests', "Requests library import"),
-        (r'import\s+socket', "Socket library import"),
-        (r'from\s+urllib', "URL library import"),
-        (r'from\s+requests', "Requests library import"),
-        
-        (r'import\s+threading', "Threading import"),
-        (r'import\s+multiprocessing', "Multiprocessing import"),
-        (r'from\s+threading', "Threading import"),
-        (r'from\s+multiprocessing', "Multiprocessing import"),
     ]
     
     def validate_code(self, code: str) -> Tuple[bool, str]:

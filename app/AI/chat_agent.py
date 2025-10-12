@@ -72,11 +72,14 @@ class ChatAgent:
             user_message = self._extract_user_message_from_response(response)
             
             retry_count = 0
-            max_retries = 3
+            max_retries = 5
             current_result = execution_result
             current_response = response
             current_code = code
             current_user_message = user_message
+            
+            # Create a temporary conversation history for retries
+            retry_history = conversation_history.copy()
             
             while not current_result.get('success', False) and retry_count < max_retries:
                 retry_count += 1
@@ -89,9 +92,23 @@ class ChatAgent:
                     error_msg = f"Error in 'chat()': execution_result missing 'error' key. Keys: {list(current_result.keys())} - {str(e)}"
                     print(f"EXECUTION ERROR: {error_msg}")
                 
-                error_context = f"{context}\n\nUSER: {message}\nASSISTANT: {current_response}\n\nCODE EXECUTION ERROR: {error_msg}\n\nPlease fix the code and try again. The error above shows what went wrong."
+                # Add the assistant's failed response to history
+                retry_history.append({
+                    'role': 'assistant',
+                    'content': current_response,
+                    'code': current_code,
+                    'timestamp': datetime.now().isoformat()
+                })
                 
-                retry_response = await self._get_error_feedback_response(error_context + "\nASSISTANT:")
+                error_feedback = f"I ran into an error executing your code. Here's the error:\n\n{error_msg}\n\nPlease fix the code and try again. Make sure to check the data types and column names."
+                retry_history.append({
+                    'role': 'user', 
+                    'content': error_feedback,
+                    'timestamp': datetime.now().isoformat()
+                })
+                
+                retry_context = self._build_conversation_context(retry_history, df)
+                retry_response = await self._get_model_response(retry_context, error_feedback)
                 print("------------- RETRY RESPONSE -------------")
                 print(retry_response)
                 
@@ -153,6 +170,9 @@ IMPORTANT RULES:
 - If a column already exists with the right name, don't rename it again
 - If data is already in the right format, don't transform it again
 - Check the current state first, then do only what's missing
+- The DataFrame is available as variable 'df' - this contains the user's data
+- Common modules are pre-imported: pandas (as pd), numpy (as np), re, datetime
+- You can import additional modules if needed (except os, subprocess, shutil for security)
 
 RESPONSE STYLE:
 - Start with a friendly acknowledgment like "Sure!" or "I'll help you with that"

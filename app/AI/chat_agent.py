@@ -13,9 +13,13 @@ class ConversationState:
 
 class ChatAgent:
     def __init__(self):
-        self.ollama_url = "http://localhost:11434/api/generate"
-        self.ollama_model = "qwen3-coder:30b"
+        self.ollama_url = "http://localhost:11434/api/generate" 
+        #qwen3-coder:30b 
+        self.ollama_model = "llama3.1:8b"
         self.code_executor = CodeExecutor()
+        
+        # AUTONOMOUS EXECUTION FEATURE FLAG - Comment this line to disable
+        self.ENABLE_AUTONOMOUS_EXECUTION = True
         
     async def _get_model_response(self, context: str, message: str, model_type: str = "ollama") -> str:
         full_prompt = f"{context}\n\nUSER: {message}\nASSISTANT:"
@@ -37,31 +41,18 @@ class ChatAgent:
         except Exception as e:
             return f"Error in '_get_model_response': {str(e)}"
     
-    async def _get_error_feedback_response(self, error_context_prompt: str) -> str:
-        try:
-            response = requests.post(self.ollama_url, json={
-                "model": self.ollama_model,
-                "prompt": error_context_prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.3,
-                    "num_predict": 600
-                }
-            })
-
-            result = response.json()
-            return result.get("response")
-        
-        except Exception as e:
-            return f"Error in '_get_error_feedback_response': {str(e)}"
     
     async def chat(self, message: str, conversation_history: List[Dict], df: pd.DataFrame = None, model_type: str = "ollama") -> Dict:
         print(f"USER: {message}")
         
+        # AUTONOMOUS EXECUTION - Comment these 3 lines to disable
+        if hasattr(self, 'ENABLE_AUTONOMOUS_EXECUTION') and self._is_multiple_tasks(message):
+            return await self._autonomous_chat(message, conversation_history, df, model_type)
+        
         context = self._build_conversation_context(conversation_history, df)
         
         response = await self._get_model_response(context, message, model_type)
-        print("------------- RAW MODEL RESPONSE -------------")
+        print("------------- MODEL RESPONSE -------------")
         print(response)
         
         if self._contains_code_execution(response):
@@ -78,9 +69,6 @@ class ChatAgent:
             current_code = code
             current_user_message = user_message
             
-            # Create a temporary conversation history for retries
-            retry_history = conversation_history.copy()
-            
             while not current_result.get('success', False) and retry_count < max_retries:
                 retry_count += 1
                 print(f"------------- RETRY ATTEMPT {retry_count}/{max_retries} -------------")
@@ -92,8 +80,7 @@ class ChatAgent:
                     error_msg = f"Error in 'chat()': execution_result missing 'error' key. Keys: {list(current_result.keys())} - {str(e)}"
                     print(f"EXECUTION ERROR: {error_msg}")
                 
-                # Add the assistant's failed response to history
-                retry_history.append({
+                conversation_history.append({
                     'role': 'assistant',
                     'content': current_response,
                     'code': current_code,
@@ -101,13 +88,13 @@ class ChatAgent:
                 })
                 
                 error_feedback = f"I ran into an error executing your code. Here's the error:\n\n{error_msg}\n\nPlease fix the code and try again. Make sure to check the data types and column names."
-                retry_history.append({
+                conversation_history.append({
                     'role': 'user', 
                     'content': error_feedback,
                     'timestamp': datetime.now().isoformat()
                 })
                 
-                retry_context = self._build_conversation_context(retry_history, df)
+                retry_context = self._build_conversation_context(conversation_history, df)
                 retry_response = await self._get_model_response(retry_context, error_feedback)
                 print("------------- RETRY RESPONSE -------------")
                 print(retry_response)
@@ -295,3 +282,272 @@ CONVERSATION HISTORY:
 - Sample data (first 3 rows):
 {df.head(3).to_string()}
 """
+    
+    # ========== AUTONOMOUS EXECUTION METHODS ==========
+    # Comment this entire section to disable autonomous execution
+    
+    def _is_multiple_tasks(self, message: str) -> bool:
+        """Detect if message contains multiple numbered tasks"""
+        import re
+        numbered_tasks = re.findall(r'\d+\)', message)
+        return len(numbered_tasks) > 1
+    
+    async def _autonomous_chat(self, message: str, conversation_history: List[Dict], df: pd.DataFrame = None, model_type: str = "ollama") -> Dict:
+        """Handle autonomous execution for multiple tasks"""
+        current_message = message
+        current_df = df
+        execution_turns = []
+        turn_count = 0
+        max_turns = 10  # Safety limit
+        
+        # Use the original conversation history and evolve it
+        working_history = conversation_history
+        
+        while turn_count < max_turns:
+            turn_count += 1
+            print(f"========== AUTONOMOUS TURN {turn_count} ==========")
+            
+            context = self._build_autonomous_context(working_history, current_df)
+            response = await self._get_model_response(context, current_message, model_type)
+            print("------------- MODEL RESPONSE -------------")
+            print(response)
+        
+            # Process this turn
+            turn_result = await self._process_autonomous_turn(response, current_df, working_history)
+            execution_turns.append(turn_result)
+            
+            # Update dataframe if execution was successful
+            if turn_result.get('has_code') and turn_result.get('execution_result', {}).get('success'):
+                current_df = turn_result['execution_result']['dataframe']
+            
+            # Add this turn to conversation history
+            working_history.append({
+                'role': 'assistant',
+                'content': turn_result['message'],
+                'code': turn_result.get('executed_code'),
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            # Check if LLM wants to continue
+            continue_action = self._extract_continue_action(response)
+            if continue_action is None:
+                # No continue tag found - LLM is done
+                print(f"========== AUTONOMOUS EXECUTION COMPLETED AFTER {turn_count} TURNS ==========")
+                return self._aggregate_autonomous_results(execution_turns, current_df, turn_count)
+            
+            # Prepare next message for continuation
+            current_message = f"You are in autonomous execution mode. Complete this remaining task: {continue_action}. Do NOT repeat previous tasks that are already completed."
+        
+        # Safety limit reached
+        print(f"========== AUTONOMOUS EXECUTION STOPPED - MAX TURNS ({max_turns}) REACHED ==========")
+        return self._aggregate_autonomous_results(execution_turns, current_df, turn_count)
+    
+    def _build_autonomous_context(self, history: List[Dict], df: pd.DataFrame) -> str:
+        """Build context specifically for autonomous execution"""
+        df_info = self._get_dataframe_info(df) if df is not None else "No data loaded"
+        
+        system_prompt = f"""You are an Excel transformer. You need to make data transformations for users.
+
+DATA FRAME:
+{df_info}
+
+INSTRUCTIONS:
+You need to make code changes by generating and wrapping code in <execute_code> tags, which will then be executed in a Python environment. Common modules like numpy (np), pandas (pd), re have already been imported. You can import any module you require as well, but changes need to be made on the existing 'df' object.
+
+TASK CLASSIFICATION:
+Once you get a user query, you need to understand the intent and classify it into the following categories:
+
+SINGLE TASK:
+If the user gives you one task or a simple request, handle it directly in one response.
+Example:
+User: "Remove the ID column"
+Response: "I'll remove the ID column for you."
+<execute_code>
+df = df.drop(columns=['ID'])
+</execute_code>
+
+MULTIPLE TASKS:
+If the user gives you multiple numbered tasks (like "1) Do X 2) Do Y 3) Do Z"), you MUST use autonomous execution to handle them one by one across multiple turns.
+
+For multiple tasks:
+- Do ONE task per turn
+- After each task (except the last), use <continue_with>LIST ALL REMAINING TASKS</continue_with>
+- Include ALL remaining task numbers and descriptions in the continue tag
+- Only stop when all tasks are completed (no continue tag on final turn)
+
+Example for multiple tasks:
+User: "1) Delete ID column 2) Clean names 3) Sort by amount"
+
+Turn 1: "I'll start by deleting the ID column."
+<execute_code>
+df = df.drop(columns=['ID'])
+</execute_code>
+<continue_with>2) Clean names 3) Sort by amount</continue_with>
+
+Turn 2: "Now I'll clean the names."
+<execute_code>
+df['Name'] = df['Name'].str.strip().str.title()
+</execute_code>
+<continue_with>3) Sort by amount</continue_with>
+
+Turn 3: "Finally, sorting by amount."
+<execute_code>
+df = df.sort_values('Amount', ascending=False)
+</execute_code>
+All tasks completed!
+
+CONVERSATION HISTORY:
+"""
+        
+        recent_history = history[-10:] if len(history) > 10 else history
+        for msg in recent_history:
+            role = msg['role'].upper()
+            content = msg['content']
+            system_prompt += f"\n{role}: {content}"
+            if msg.get('code'):
+                system_prompt += f"\n[EXECUTED CODE: {msg['code']}]"
+        
+        return system_prompt
+    
+    async def _process_autonomous_turn(self, response: str, df: pd.DataFrame, history: List[Dict]) -> Dict:
+        """Process a single turn of autonomous execution with retry logic"""
+        if self._contains_code_execution(response):
+            code = self._extract_code_from_response(response)
+            print("------------- CODE EXECUTED -------------")
+            print(code)
+            execution_result = self._execute_code(code, df)
+            user_message = self._extract_user_message_from_response(response)
+            
+            retry_count = 0
+            max_retries = 3  # Reduced for autonomous mode
+            current_result = execution_result
+            current_response = response
+            current_code = code
+            current_user_message = user_message
+            
+            # Retry logic for failed executions using same history
+            while not current_result.get('success', False) and retry_count < max_retries:
+                retry_count += 1
+                print(f"------------- RETRY ATTEMPT {retry_count}/{max_retries} -------------")
+                
+                try:
+                    error_msg = current_result['error']
+                    print(f"EXECUTION ERROR: {error_msg}")
+                except KeyError as e:
+                    error_msg = f"Error: execution_result missing 'error' key. Keys: {list(current_result.keys())} - {str(e)}"
+                    print(f"EXECUTION ERROR: {error_msg}")
+                
+                # Add failed attempt to history
+                history.append({
+                    'role': 'assistant',
+                    'content': current_response,
+                    'code': current_code,
+                    'timestamp': datetime.now().isoformat()
+                })
+                
+                error_feedback = f"I ran into an error executing your code. Here's the error:\n\n{error_msg}\n\nPlease fix the code and try again. Make sure to check the data types and column names."
+                history.append({
+                    'role': 'user', 
+                    'content': error_feedback,
+                    'timestamp': datetime.now().isoformat()
+                })
+                
+                retry_context = self._build_autonomous_context(history, df)
+                retry_response = await self._get_model_response(retry_context, error_feedback)
+                print("------------- RETRY RESPONSE -------------")
+                print(retry_response)
+                
+                if self._contains_code_execution(retry_response):
+                    retry_code = self._extract_code_from_response(retry_response)
+                    print("------------- RETRY CODE EXECUTED -------------")
+                    print(retry_code)
+                    retry_execution_result = self._execute_code(retry_code, df)
+                    retry_user_message = self._extract_user_message_from_response(retry_response)
+                    
+                    current_result = retry_execution_result
+                    current_response = retry_response
+                    current_code = retry_code
+                    current_user_message = retry_user_message
+                else:
+                    return {
+                        'message': retry_response,
+                        'has_code': False,
+                        'raw_response': retry_response,
+                        'retry_attempt': True,
+                        'retry_count': retry_count
+                    }
+            
+            if not current_result.get('success', False):
+                try:
+                    final_error_msg = current_result['error']
+                    print(f"FINAL ERROR AFTER {retry_count} RETRIES: {final_error_msg}")
+                except KeyError as e:
+                    final_error_msg = f"Error: final result missing 'error' key. Keys: {list(current_result.keys())} - {str(e)}"
+                    print(f"FINAL ERROR AFTER {retry_count} RETRIES: {final_error_msg}")
+            
+            return {
+                'message': current_user_message,
+                'has_code': True,
+                'execution_result': current_result,
+                'raw_response': current_response,
+                'executed_code': current_code,
+                'retry_attempt': retry_count > 0,
+                'retry_count': retry_count
+            }
+        else:
+            return {
+                'message': response,
+                'has_code': False,
+                'raw_response': response,
+            }
+    
+    def _extract_continue_action(self, response: str) -> Optional[str]:
+        """Extract the continue action from <continue_with> tags"""
+        try:
+            start = response.find("<continue_with>")
+            if start == -1:
+                return None
+                
+            start += len("<continue_with>")
+            end = response.find("</continue_with>", start)
+            if end == -1:
+                return None
+                
+            return response[start:end].strip()
+        except Exception as e:
+            print(f"Error extracting continue action: {str(e)}")
+            return None
+    
+    def _aggregate_autonomous_results(self, execution_turns: List[Dict], final_df: pd.DataFrame, turn_count: int) -> Dict:
+        """Aggregate results from all autonomous execution turns"""
+        # Get the final turn's message as the main response
+        final_message = execution_turns[-1]['message'] if execution_turns else "Execution completed"
+        
+        # Check if any turn had code execution
+        has_any_code = any(turn.get('has_code', False) for turn in execution_turns)
+        
+        # Get all executed code blocks
+        all_code = []
+        for turn in execution_turns:
+            if turn.get('executed_code'):
+                all_code.append(turn['executed_code'])
+        
+        # Final execution result
+        final_execution_result = None
+        if execution_turns:
+            last_turn = execution_turns[-1]
+            if last_turn.get('execution_result'):
+                final_execution_result = last_turn['execution_result']
+                # Update with final dataframe
+                final_execution_result['dataframe'] = final_df
+        
+        return {
+            'message': final_message,
+            'has_code': has_any_code,
+            'execution_result': final_execution_result,
+            'raw_response': execution_turns[-1]['raw_response'] if execution_turns else "",
+            'executed_code': '\n\n'.join(all_code) if all_code else None,
+            'autonomous_execution': True,
+            'turn_count': turn_count,
+            'all_turns': execution_turns
+        }

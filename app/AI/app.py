@@ -263,7 +263,8 @@ async def chat_with_agent(request: ChatRequest):
                 er['error'] = str(er['error'])
             safe_execution_result = er
 
-        return {
+        # Prepare response
+        chat_response = {
             'success': True,
             'message': response['message'],
             'dataframe_updated': dataframe_updated,
@@ -273,6 +274,17 @@ async def chat_with_agent(request: ChatRequest):
             'undo_count': len(undo_stack),
             'redo_count': len(redo_stack),
         }
+        
+        # Add updated dataframe preview if dataframe was updated
+        if dataframe_updated and current_dataframe is not None:
+            chat_response.update({
+                'updated_preview': safe_to_dict(current_dataframe.head(100)),
+                'updated_columns': list(current_dataframe.columns),
+                'updated_shape': current_dataframe.shape,
+                'updated_total_rows': len(current_dataframe),
+            })
+        
+        return chat_response
     except Exception as e:
         return {
             'success': False,

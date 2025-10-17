@@ -85,6 +85,10 @@ async def upload_file(file: UploadFile = File(...)):
         undo_stack = []
         redo_stack = []
         
+        # Save uploaded data to data.csv immediately
+        current_dataframe.to_csv('data.csv', index=False)
+        print(f"💾 Uploaded data saved to data.csv: {current_dataframe.shape}")
+        
         return {
             "message": "File uploaded successfully",
             "filename": file.filename,

@@ -347,7 +347,15 @@ CONVERSATION HISTORY:
             # Update dataframe if execution was successful
             if turn_result.get('has_code') and turn_result.get('execution_result', {}).get('success'):
                 current_df = turn_result['execution_result']['dataframe']
-                print(f"🎯 Turn {turn_count}: Code executed successfully, emitting dataframe update...")
+                print(f"🎯 Turn {turn_count}: Code executed successfully, saving to data.csv and emitting update...")
+                
+                # Save updated dataframe to CSV immediately
+                try:
+                    current_df.to_csv('data.csv', index=False)
+                    print(f"💾 Dataframe saved to data.csv successfully")
+                except Exception as e:
+                    print(f"❌ Failed to save dataframe to CSV: {str(e)}")
+                
                 # Emit real-time dataframe update to WebSocket
                 await self._emit_dataframe_update(current_df)
             else:

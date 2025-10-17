@@ -24,6 +24,8 @@ export default function Prep(){
     let CURRENT_PAGE = 1
     let parquetReady = false
     let TOTAL_ROWS = 0
+    let LAST_PAGE_SIG = ''
+    const pollController = { timer: null, backoff: 2000, running: false }
 
     // History (track displayed rows/columns snapshots for manual edits and API-driven changes)
     let HISTORY = []
@@ -224,6 +226,7 @@ export default function Prep(){
       console.log('📊 About to call renderTable() with EDITED:', EDITED.length, 'COLUMNS:', COLUMNS.length)
       renderTable()
       console.log('📊 renderTable() completed')
+      try { LAST_PAGE_SIG = JSON.stringify({ cols: COLUMNS, total: TOTAL_ROWS, page: EDITED }) } catch(e) { LAST_PAGE_SIG = '' }
     }
 
     async function loadDataPage(targetPage){
@@ -335,7 +338,7 @@ export default function Prep(){
       try{
         const resp = await fetch(`${API_BASE}/upload`, { method: 'POST', body: formData })
         const result = await resp.json()
-        if (resp.ok){ displayData(result.preview, result.columns, result.total_rows); HISTORY = []; FUTURE = []; updateHistoryInfo() }
+        if (resp.ok){ displayData(result.preview, result.columns, result.total_rows); HISTORY = []; FUTURE = []; updateHistoryInfo(); startLivePolling() }
       } catch(e){ console.warn('Upload failed', e) }
     }
 
@@ -427,7 +430,7 @@ export default function Prep(){
     if (chatSend) chatSend.addEventListener('click', sendChat)
     if (chatInput) chatInput.addEventListener('keydown', (e) => { if (e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendChat() } })
     if (chatClear) chatClear.addEventListener('click', () => { MESSAGES = []; renderChat() })
-    if (transformBtn) transformBtn.addEventListener('click', transformData)
+    if (transformBtn) transformBtn.addEventListener('click', () => { startLivePolling(); transformData() })
     if (undoBackendBtn) undoBackendBtn.addEventListener('click', undoBackend)
     if (followupSubmitBtn) followupSubmitBtn.addEventListener('click', submitFollowup)
     if (followupCancelBtn) followupCancelBtn.addEventListener('click', () => { if (followupSection) followupSection.classList.add('hidden'); if (followupQsEl) followupQsEl.innerHTML = ''; sessionId = null; setTransformStatus('Follow-up cancelled. You can try a different instruction.', 'info') })
@@ -505,7 +508,37 @@ export default function Prep(){
 
     // No params to render for removed transform UI
 
-    return () => { /* cleanup minimal */ }
+    async function pollTick(){
+      if (!pollController.running) return
+      if (document.hidden){ pollScheduleNext(); return }
+      try{
+        const resp = await fetch(`${API_BASE}/data?page=${CURRENT_PAGE}&rows_per_page=${PAGE_SIZE}`, { cache: 'no-store' })
+        if (resp.ok){
+          const result = await resp.json()
+          let changed = false
+          try {
+            const sig = JSON.stringify({ cols: result.columns, total: result.total_rows, page: result.data })
+            if (sig !== LAST_PAGE_SIG) changed = true
+          } catch(e){ changed = true }
+          if (changed){
+            CURRENT_PAGE = result.current_page || CURRENT_PAGE
+            displayData(result.data, result.columns, result.total_rows)
+          }
+          pollController.backoff = 2000
+        } else {
+          pollController.backoff = Math.min(15000, Math.floor(pollController.backoff * 1.5))
+        }
+      } catch(e){
+        pollController.backoff = Math.min(15000, Math.floor(pollController.backoff * 1.5))
+      } finally {
+        pollScheduleNext()
+      }
+    }
+    function pollScheduleNext(){ pollController.timer = setTimeout(pollTick, pollController.backoff) }
+    function startLivePolling(){ if (pollController.timer || pollController.running) return; pollController.running = true; pollController.backoff = 2000; pollTick() }
+    function stopLivePolling(){ pollController.running = false; if (pollController.timer){ clearTimeout(pollController.timer); pollController.timer = null } }
+
+    return () => { stopLivePolling() }
   }, [])
 
   return (

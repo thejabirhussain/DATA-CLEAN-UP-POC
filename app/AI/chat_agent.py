@@ -12,42 +12,12 @@ class ConversationState:
         self.dataframe_history = []
 
 class ChatAgent:
-    def __init__(self, websocket=None):
+    def __init__(self):
         self.ollama_url = "http://localhost:11434/api/generate" 
-        #qwen3-coder:30b 
         self.ollama_model = "llama3.1:8b"
         self.code_executor = CodeExecutor()
-        self.websocket = websocket
-        
-        # AUTONOMOUS EXECUTION FEATURE FLAG - Comment this line to disable
-        self.ENABLE_AUTONOMOUS_EXECUTION = True
     
-    async def _emit_dataframe_update(self, df: pd.DataFrame):
-        """Emit simple refresh event to WebSocket client"""
-        print(f"🔄 _emit_dataframe_update called - WebSocket: {self.websocket is not None}, DF: {df is not None}")
-        
-        if self.websocket and df is not None:
-            try:
-                import json
-                
-                message = {
-                    "type": "dataframe_refresh",
-                    "data": {
-                        "message": "Dataframe updated - please refresh"
-                    }
-                }
-                
-                print(f"📤 Sending WebSocket refresh event")
-                await self.websocket.send_text(json.dumps(message))
-                print(f"✅ WebSocket refresh event sent successfully")
-                
-            except Exception as e:
-                print(f"❌ WebSocket emission error: {str(e)}")
-        else:
-            if not self.websocket:
-                print(f"⚠️ No WebSocket connection available")
-            if df is None:
-                print(f"⚠️ DataFrame is None")
+
         
     async def _get_model_response(self, context: str, message: str, model_type: str = "ollama") -> str:
         full_prompt = f"{context}\n\nUSER: {message}\nASSISTANT:"
@@ -73,13 +43,7 @@ class ChatAgent:
     async def chat(self, message: str, conversation_history: List[Dict], df: pd.DataFrame = None, model_type: str = "ollama") -> Dict:
         print(f"USER: {message}")
         
-        # AUTONOMOUS EXECUTION - Comment these 3 lines to disable
-        if hasattr(self, 'ENABLE_AUTONOMOUS_EXECUTION') and self._is_multiple_tasks(message):
-            return await self._autonomous_chat(message, conversation_history, df, model_type)
-        
-        context = self._build_conversation_context(conversation_history, df)
-        
-        response = await self._get_model_response(context, message, model_type)
+        return await self._autonomous_chat(message, conversation_history, df, model_type)
         print("------------- MODEL RESPONSE -------------")
         print(response)
         
@@ -122,7 +86,8 @@ class ChatAgent:
                     'timestamp': datetime.now().isoformat()
                 })
                 
-                retry_context = self._build_conversation_context(conversation_history, df)
+                # Use task-aware retry context for better error handling
+                retry_context = self._build_task_aware_retry_context(conversation_history, df, current_response)
                 retry_response = await self._get_model_response(retry_context, error_feedback)
                 print("------------- RETRY RESPONSE -------------")
                 print(retry_response)
@@ -171,60 +136,7 @@ class ChatAgent:
                 'raw_response': response,
             }
             
-    def _build_conversation_context(self, history: List[Dict], df: pd.DataFrame) -> str:
-        df_info = self._get_dataframe_info(df) if df is not None else "No data loaded"
-        
-        system_prompt = f"""You are a friendly data assistant. Be conversational and helpful.
 
-DATA INFO:
-{df_info}
-
-IMPORTANT RULES:
-- Look at the current column names and data state before writing code
-- Only perform operations that are actually needed
-- If a column already exists with the right name, don't rename it again
-- If data is already in the right format, don't transform it again
-- Check the current state first, then do only what's missing
-- The DataFrame is available as variable 'df' - this contains the user's data
-- Common modules are pre-imported: pandas (as pd), numpy (as np), re, datetime
-- You can import additional modules if needed (except os, subprocess, shutil for security)
-
-RESPONSE STYLE:
-- Start with a friendly acknowledgment like "Sure!" or "I'll help you with that"
-- Give a brief, simple explanation of what you're doing
-- Keep responses short and user-friendly
-- Use <execute_code> tags for data transformations
-
-EXAMPLES:
-
-User: "Rename Ledger Name to Ledger"
-Response: "Sure! I'll rename that column for you."
-<execute_code>
-df = df.rename(columns={{'Ledger Name': 'Ledger'}})
-</execute_code>
-
-User: "Move Ledger column to the front" (when Ledger column already exists)
-Response: "I'll move the Ledger column to the front for you."
-<execute_code>
-cols = ['Ledger'] + [col for col in df.columns if col != 'Ledger']
-df = df[cols]
-</execute_code>
-
-User: "Clean the email column"
-Response: "What kind of cleaning do you need? Remove spaces, fix formatting, or something else?"
-
-CONVERSATION HISTORY:
-"""
-        
-        recent_history = history[-10:] if len(history) > 10 else history
-        for msg in recent_history:
-            role = msg['role'].upper()
-            content = msg['content']
-            system_prompt += f"\n{role}: {content}"
-            if msg.get('code'):
-                system_prompt += f"\n[EXECUTED CODE: {msg['code']}]"
-        
-        return system_prompt
     
     def _contains_code_execution(self, response: str) -> bool:
         return ("<execute_code>" in response and "</execute_code>" in response)
@@ -311,24 +223,13 @@ CONVERSATION HISTORY:
 {df.head(3).to_string()}
 """
     
-    # ========== AUTONOMOUS EXECUTION METHODS ==========
-    # Comment this entire section to disable autonomous execution
-    
-    def _is_multiple_tasks(self, message: str) -> bool:
-        """Detect if message contains multiple numbered tasks"""
-        import re
-        numbered_tasks = re.findall(r'\d+\)', message)
-        return len(numbered_tasks) > 1
     
     async def _autonomous_chat(self, message: str, conversation_history: List[Dict], df: pd.DataFrame = None, model_type: str = "ollama") -> Dict:
-        """Handle autonomous execution for multiple tasks"""
         current_message = message
         current_df = df
         execution_turns = []
         turn_count = 0
-        max_turns = 10  # Safety limit
-        
-        # Use the original conversation history and evolve it
+        max_turns = 10 
         working_history = conversation_history
         
         while turn_count < max_turns:
@@ -347,19 +248,12 @@ CONVERSATION HISTORY:
             # Update dataframe if execution was successful
             if turn_result.get('has_code') and turn_result.get('execution_result', {}).get('success'):
                 current_df = turn_result['execution_result']['dataframe']
-                print(f"🎯 Turn {turn_count}: Code executed successfully, saving to data.csv and emitting update...")
-                
                 # Save updated dataframe to CSV immediately
                 try:
                     current_df.to_csv('data.csv', index=False)
-                    print(f"💾 Dataframe saved to data.csv successfully")
                 except Exception as e:
-                    print(f"❌ Failed to save dataframe to CSV: {str(e)}")
-                
-                # Emit real-time dataframe update to WebSocket
-                await self._emit_dataframe_update(current_df)
-            else:
-                print(f"⏭️ Turn {turn_count}: No code execution or execution failed, skipping dataframe update")
+                    pass  # Silent CSV save failure
+            # Note: No dataframe update if no code or execution failed
             
             # Add this turn to conversation history
             working_history.append({
@@ -608,7 +502,6 @@ CONVERSATION HISTORY:
                 
             return response[start:end].strip()
         except Exception as e:
-            print(f"Error extracting continue action: {str(e)}")
             return None
     
     def _aggregate_autonomous_results(self, execution_turns: List[Dict], final_df: pd.DataFrame, turn_count: int) -> Dict:

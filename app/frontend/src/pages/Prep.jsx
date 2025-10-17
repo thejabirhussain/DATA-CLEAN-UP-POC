@@ -95,44 +95,7 @@ export default function Prep(){
     let MESSAGES = []
     let selectedLLM = 'ollama'
     
-    // WebSocket for real-time dataframe updates
-    let dataframeWebSocket = null
-    
-    function connectDataframeWebSocket() {
-      try {
-        dataframeWebSocket = new WebSocket('ws://localhost:8000/ws/chat')
-        
-        dataframeWebSocket.onopen = () => {
-          console.log('🔌 WebSocket connected')
-        }
-        
-        dataframeWebSocket.onmessage = (event) => {
-          const message = JSON.parse(event.data)
-          
-          if (message.type === 'dataframe_refresh') {
-            pushHistory()
-            loadDataPage(1) // Refresh dataframe from /data endpoint
-          } else if (message.type === 'chat_complete') {
-            addChatMessage('assistant', message.data.message)
-          } else if (message.type === 'error') {
-            addChatMessage('assistant', `Sorry, I encountered an error: ${message.data.error}`)
-          }
-        }
-        
-        dataframeWebSocket.onclose = () => {
-          console.log('🔌 WebSocket closed')
-        }
-        
-        dataframeWebSocket.onerror = (error) => {
-          console.error('❌ WebSocket error:', error)
-        }
-      } catch (error) {
-        console.error('❌ Failed to connect dataframe WebSocket:', error)
-      }
-    }
-    
-    // Connect WebSocket on component mount
-    connectDataframeWebSocket()
+
     // Transform state
     let transformLoading = false
     let sessionId = null
@@ -448,17 +411,13 @@ export default function Prep(){
       if (chatSend){ chatSend.disabled = true; chatSend.textContent = 'Sending…'; chatSend.classList.add('opacity-70') }
       
       try{
-        // Send message via WebSocket if available, otherwise fallback to HTTP
-        if (dataframeWebSocket && dataframeWebSocket.readyState === WebSocket.OPEN) {
-          dataframeWebSocket.send(JSON.stringify({ message, model: selectedLLM }))
-        } else {
-          const resp = await fetch(`${API_BASE}/chat`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ message, model: selectedLLM }) })
-          const result = await resp.json()
-          if (result.success){
-            addChatMessage('assistant', result.message)
-            if (result.dataframe_updated){ pushHistory(); await loadDataPage(1) }
-          } else { addChatMessage('assistant', `Sorry, I encountered an error: ${result.error}`) }
-        }
+        // Send message via HTTP
+        const resp = await fetch(`${API_BASE}/chat`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ message, model: selectedLLM }) })
+        const result = await resp.json()
+        if (result.success){
+          addChatMessage('assistant', result.message)
+          if (result.dataframe_updated){ pushHistory(); await loadDataPage(1) }
+        } else { addChatMessage('assistant', `Sorry, I encountered an error: ${result.error}`) }
       } catch(e){ 
         addChatMessage('assistant', `Sorry, I'm having connection issues: ${e.message}`)
         console.error('Chat error:', e)

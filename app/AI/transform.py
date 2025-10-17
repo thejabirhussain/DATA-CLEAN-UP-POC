@@ -5,7 +5,7 @@ from typing import Dict, Any
 class CoderAgent:
     def __init__(self):
         self.ollama_url = "http://localhost:11434/api/generate"
-        self.model = "qwen3-coder:30b"
+        self.model = "llama3.1:8b"
     
     async def process_instruction(self, instruction: str, df: pd.DataFrame, model_type: str = "ollama") -> str:
         return await self.generate_code(instruction, df, model_type)

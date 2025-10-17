@@ -375,6 +375,57 @@ CONVERSATION HISTORY:
         print(f"========== AUTONOMOUS EXECUTION STOPPED - MAX TURNS ({max_turns}) REACHED ==========")
         return self._aggregate_autonomous_results(execution_turns, current_df, turn_count)
     
+    def _build_task_aware_retry_context(self, history: List[Dict], df: pd.DataFrame, failed_response: str) -> str:
+        """Build context for retry attempts that maintains task awareness"""
+        df_info = self._get_dataframe_info(df) if df is not None else "No data loaded"
+        
+        # Extract the current task from the failed response
+        current_task = "the current task"
+        if "Continue with:" in failed_response:
+            # This was a continuation from previous turn
+            lines = failed_response.split('\n')
+            for line in lines:
+                if 'Continue with:' in line:
+                    current_task = line.replace('Continue with:', '').strip()
+                    break
+        else:
+            # Try to extract task from the response content
+            if 'Split Period' in failed_response:
+                current_task = "Split Period Column into Period Year and Period Month"
+            elif 'standardize' in failed_response.lower() and 'header' in failed_response.lower():
+                current_task = "Standardize column headers by removing Name suffix"
+            elif 'sort' in failed_response.lower() or 'order' in failed_response.lower():
+                current_task = "Order records by Net Amount in descending order"
+        
+        system_prompt = f"""You are an Excel transformer in RETRY MODE for autonomous execution.
+
+DATA FRAME:
+{df_info}
+
+RETRY CONTEXT:
+You were working on: {current_task}
+Your code failed with an error. You need to FIX THE SPECIFIC CODE for this task only.
+
+IMPORTANT:
+- Focus ONLY on fixing the code for: {current_task}
+- Do NOT work on other tasks or columns
+- Do NOT repeat previous tasks
+- Fix the specific error in your code for this task
+- Use proper pandas syntax and column names
+
+CONVERSATION HISTORY:
+"""
+        
+        recent_history = history[-5:] if len(history) > 5 else history
+        for msg in recent_history:
+            role = msg['role'].upper()
+            content = msg['content']
+            system_prompt += f"\n{role}: {content}"
+            if msg.get('code'):
+                system_prompt += f"\n[EXECUTED CODE: {msg['code']}]"
+        
+        return system_prompt
+    
     def _build_autonomous_context(self, history: List[Dict], df: pd.DataFrame) -> str:
         """Build context specifically for autonomous execution"""
         df_info = self._get_dataframe_info(df) if df is not None else "No data loaded"
@@ -485,7 +536,8 @@ CONVERSATION HISTORY:
                     'timestamp': datetime.now().isoformat()
                 })
                 
-                retry_context = self._build_autonomous_context(history, df)
+                # Build task-aware retry context for autonomous execution
+                retry_context = self._build_task_aware_retry_context(history, df, current_response)
                 retry_response = await self._get_model_response(retry_context, error_feedback)
                 print("------------- RETRY RESPONSE -------------")
                 print(retry_response)

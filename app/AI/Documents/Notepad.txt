@@ -9,3 +9,10 @@ python app.py
 cd app/frontend
 npm install
 npm run dev
+
+
+Issues---
+
+1) Figure out the role of data.csv, update data.csv in backend
+2) Add complete logs of the llm chat history to understadn autonomous and rety mechanisms
+3) Disable transform and chat agent if no data is uplaoded

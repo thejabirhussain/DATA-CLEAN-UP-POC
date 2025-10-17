@@ -1,3 +1,23 @@
+"""
+Excel AI FastAPI Application
+=============================
+
+A comprehensive data processing and AI-powered analytics platform that provides:
+- Excel/CSV file upload and manipulation
+- AI-powered data transformations using local LLM (Ollama)
+- Interactive chat interface for data analysis
+- RAG (Retrieval Augmented Generation) for document Q&A
+- Undo/Redo functionality for data operations
+- Real-time data preview and pagination
+
+Dependencies:
+- FastAPI: Web framework for API endpoints
+- Pandas: Data manipulation and analysis
+- Pytesseract: OCR for image processing
+- Ollama: Local LLM for code generation and chat
+- Google Generative AI: For RAG document processing
+"""
+
 import io
 import os
 import pandas as pd
@@ -11,14 +31,20 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from typing import Optional
+from typing import Optional, List, Dict, Union
+from typing import TYPE_CHECKING
 from datetime import datetime
 from werkzeug.utils import secure_filename
 
+# Configure Tesseract OCR path (Windows-specific)
+# Update this path based on your Tesseract installation
 pytesseract.pytesseract.tesseract_cmd = r"C:\dev\tesseract\tesseract.exe"
 
+# Initialize FastAPI application with metadata
 app = FastAPI(title="Excel AI", version="1.0.0")
 
+# Configure CORS middleware to allow cross-origin requests
+# In production, replace "*" with specific allowed origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -405,4 +431,4 @@ if __name__ == "__main__":
     logging.getLogger("uvicorn").setLevel(logging.WARNING)
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")
+    uvicorn.run(app, host="0.0.0.0", port=5199, log_level="warning")

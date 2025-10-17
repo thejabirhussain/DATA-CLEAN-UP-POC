@@ -31,11 +31,12 @@ class ChatAgent:
             })
             
             result = response.json()
-            raw_text = result.get("response")
+            raw_text = result.get("response", "")
             return raw_text
             
         except Exception as e:
-            return f"Error in '_get_model_response': {str(e)}"
+            error_msg = str(e)
+            return f"Error in '_get_model_response': {(error_msg)}"
     
     async def _get_error_feedback_response(self, error_context_prompt: str) -> str:
         try:
@@ -53,7 +54,8 @@ class ChatAgent:
             return result.get("response")
         
         except Exception as e:
-            return f"Error in '_get_error_feedback_response': {str(e)}"
+            error_msg = str(e)
+            return f"Error in '_get_error_feedback_response': {(error_msg)}"
     
     async def chat(self, message: str, conversation_history: List[Dict], df: pd.DataFrame = None, model_type: str = "ollama") -> Dict:
         print(f"USER: {message}")
@@ -237,7 +239,8 @@ CONVERSATION HISTORY:
             
             return "\n".join(code_blocks) if code_blocks else ""
         except Exception as e:
-            return f"Error in '_extract_code_from_response': {str(e)}"
+            error_msg = str(e)
+            return f"Error in '_extract_code_from_response': {(error_msg)}"
     
     def _extract_user_message_from_response(self, response: str) -> str:
         try:

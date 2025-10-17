@@ -384,7 +384,7 @@ class RagSystem:
         conversation_context = ""
         if self.conversation_history:
             conversation_context = "\n\nPREVIOUS CONVERSATION:\n"
-            for i, exchange in enumerate(self.conversation_history[-3:]):
+            for i, exchange in enumerate(self.conversation_history[max(0, len(conversation_history)-3):]):
                 conversation_context += f"Question {i+1}: {exchange['question']}\n"
                 conversation_context += f"Answer {i+1}: {exchange['answer']}\n\n"
         

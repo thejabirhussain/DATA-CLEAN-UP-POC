@@ -1,3 +1,23 @@
+"""
+AI Code Generation Module for Data Transformations
+=================================================
+
+This module provides intelligent code generation capabilities for pandas DataFrame
+transformations using natural language instructions. It interfaces with local
+Ollama LLM to convert user instructions into executable Python code.
+
+Key Features:
+- Natural language to Python code conversion
+- DataFrame-aware code generation with context
+- Integration with local Ollama LLM (qwen3-coder:30b model)
+- Structured code output with proper formatting
+- DataFrame metadata analysis for better code generation
+
+Dependencies:
+- requests: HTTP client for Ollama API communication
+- pandas: DataFrame operations and analysis
+"""
+
 import requests
 import pandas as pd
 from typing import Dict, Any
@@ -11,7 +31,7 @@ class CoderAgent:
         return await self.generate_code(instruction, df, model_type)
     
     async def generate_code(self, instruction: str, df: pd.DataFrame, model_type: str = "ollama") -> str:
-        print(f"USER: {instruction}")
+        print("USER: {}".format(instruction))
         df_info = self._get_dataframe_info(df)
         
         system_prompt = f"""You are a Python code generator for pandas DataFrame operations.

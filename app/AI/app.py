@@ -2,6 +2,7 @@ import io
 import os
 import pandas as pd
 import pytesseract
+import json
 from pydantic import BaseModel
 from transform import CoderAgent
 from code_executor import CodeExecutor
@@ -10,7 +11,7 @@ from rag import RagSystem
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect
 from typing import Optional
 from datetime import datetime
 from werkzeug.utils import secure_filename
@@ -205,6 +206,99 @@ async def redo_last_undo():
         "undo_count": len(undo_stack),
         "redo_count": len(redo_stack),
     }
+
+@app.websocket("/ws/chat")
+async def websocket_chat_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    print(f"🔌 WebSocket connection accepted")
+    global current_dataframe, conversation_state, undo_stack, redo_stack
+    
+    try:
+        while True:
+            # Receive message from client
+            print(f"⏳ Waiting for WebSocket message...")
+            data = await websocket.receive_text()
+            message_data = json.loads(data)
+            message = message_data.get('message', '')
+            
+            print(f"📨 WebSocket received: {message}")
+            
+            if not message:
+                print(f"⚠️ Empty message received, skipping...")
+                continue
+                
+            print(f"🤖 WebSocket USER: {message}")
+            
+            # Create chat agent with WebSocket connection
+            print(f"🔧 Creating ChatAgent with WebSocket connection...")
+            chat_agent_ws = ChatAgent(websocket=websocket)
+            
+            # Record user message
+            conversation_state.messages.append({
+                'role': 'user',
+                'content': message,
+                'timestamp': datetime.now().isoformat()
+            })
+
+            # Get assistant response
+            response = await chat_agent_ws.chat(
+                message,
+                conversation_state.messages,
+                current_dataframe
+            )
+
+            # Record assistant message
+            conversation_state.messages.append({
+                'role': 'assistant',
+                'content': response['message'],
+                'code': response.get('executed_code'),
+                'timestamp': datetime.now().isoformat()
+            })
+
+            # Update dataframe if needed
+            dataframe_updated = False
+            if response.get('has_code') and response.get('execution_result'):
+                execution_result = response['execution_result']
+                if execution_result.get('success'):
+                    # Push current to undo stack and clear redo
+                    if current_dataframe is not None:
+                        undo_stack.append(current_dataframe.copy())
+                        if len(undo_stack) > 50:
+                            undo_stack.pop(0)
+                    redo_stack = []
+
+                    current_dataframe = execution_result['dataframe']
+                    current_dataframe.to_csv('data.csv', index=False)
+                    dataframe_updated = True
+
+            # Send final response to client
+            final_response = {
+                'type': 'chat_complete',
+                'data': {
+                    'success': True,
+                    'message': response['message'],
+                    'dataframe_updated': dataframe_updated,
+                    'autonomous_execution': response.get('autonomous_execution', False),
+                    'turn_count': response.get('turn_count', 1)
+                }
+            }
+            print(f"📤 Sending final WebSocket response: {final_response['type']}, autonomous: {final_response['data']['autonomous_execution']}, turns: {final_response['data']['turn_count']}")
+            await websocket.send_text(json.dumps(final_response))
+            print(f"✅ Final WebSocket response sent")
+            
+    except WebSocketDisconnect:
+        print("🔌❌ WebSocket client disconnected")
+    except Exception as e:
+        print(f"🔌💥 WebSocket error: {str(e)}")
+        try:
+            error_response = {
+                'type': 'error',
+                'data': {'error': str(e)}
+            }
+            print(f"📤 Sending WebSocket error response: {error_response}")
+            await websocket.send_text(json.dumps(error_response))
+        except Exception as send_error:
+            print(f"❌ Failed to send error response: {str(send_error)}")
 
 @app.post("/chat")
 async def chat_with_agent(request: ChatRequest):

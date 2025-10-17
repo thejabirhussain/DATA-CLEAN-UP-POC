@@ -94,6 +94,45 @@ export default function Prep(){
     // Chat state
     let MESSAGES = []
     let selectedLLM = 'ollama'
+    
+    // WebSocket for real-time dataframe updates
+    let dataframeWebSocket = null
+    
+    function connectDataframeWebSocket() {
+      try {
+        dataframeWebSocket = new WebSocket('ws://localhost:8000/ws/chat')
+        
+        dataframeWebSocket.onopen = () => {
+          console.log('🔌 WebSocket connected')
+        }
+        
+        dataframeWebSocket.onmessage = (event) => {
+          const message = JSON.parse(event.data)
+          
+          if (message.type === 'dataframe_refresh') {
+            pushHistory()
+            loadDataPage(1) // Refresh dataframe from /data endpoint
+          } else if (message.type === 'chat_complete') {
+            addChatMessage('assistant', message.data.message)
+          } else if (message.type === 'error') {
+            addChatMessage('assistant', `Sorry, I encountered an error: ${message.data.error}`)
+          }
+        }
+        
+        dataframeWebSocket.onclose = () => {
+          console.log('🔌 WebSocket closed')
+        }
+        
+        dataframeWebSocket.onerror = (error) => {
+          console.error('❌ WebSocket error:', error)
+        }
+      } catch (error) {
+        console.error('❌ Failed to connect dataframe WebSocket:', error)
+      }
+    }
+    
+    // Connect WebSocket on component mount
+    connectDataframeWebSocket()
     // Transform state
     let transformLoading = false
     let sessionId = null
@@ -144,6 +183,7 @@ export default function Prep(){
     }
 
     function renderTable(){
+      console.log('🎨 renderTable() called - EDITED:', EDITED.length, 'COLUMNS:', COLUMNS.length, 'TOTAL_ROWS:', TOTAL_ROWS)
       rowCount.textContent = TOTAL_ROWS
       thead.innerHTML = ''
       const trh = document.createElement('tr')
@@ -199,6 +239,12 @@ export default function Prep(){
 
     // API-powered data display (mirror demo.jsx)
     function displayData(preview, cols, total){
+      console.log('📊 displayData() called with:', {
+        previewLength: preview?.length,
+        colsLength: cols?.length, 
+        total: total
+      })
+      
       if (Array.isArray(preview) && preview.length){
         EDITED = clone(preview)
       }
@@ -211,15 +257,23 @@ export default function Prep(){
       }
       TOTAL_ROWS = total || 0
       ORIGINAL = clone(EDITED)
+      
+      console.log('📊 About to call renderTable() with EDITED:', EDITED.length, 'COLUMNS:', COLUMNS.length)
       renderTable()
+      console.log('📊 renderTable() completed')
     }
 
     async function loadDataPage(targetPage){
       try{
         const resp = await fetch(`${API_BASE}/data?page=${targetPage}&rows_per_page=${PAGE_SIZE}`)
         const result = await resp.json()
-        if (resp.ok){ CURRENT_PAGE = targetPage; displayData(result.data, result.columns, result.total_rows) }
-      } catch(e){ /* silent */ }
+        if (resp.ok){ 
+          CURRENT_PAGE = targetPage; 
+          displayData(result.data, result.columns, result.total_rows)
+        }
+      } catch(e){ 
+        console.error('❌ loadDataPage error:', e)
+      }
     }
 
     // Transform logic (mirroring demo.jsx)
@@ -392,14 +446,23 @@ export default function Prep(){
       addChatMessage('user', message); chatInput.value = ''
       const prevLabel = chatSend ? chatSend.textContent : ''
       if (chatSend){ chatSend.disabled = true; chatSend.textContent = 'Sending…'; chatSend.classList.add('opacity-70') }
+      
       try{
-        const resp = await fetch(`${API_BASE}/chat`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ message, model: selectedLLM }) })
-        const result = await resp.json()
-        if (result.success){
-          addChatMessage('assistant', result.message)
-          if (result.dataframe_updated){ pushHistory(); await loadDataPage(1) }
-        } else { addChatMessage('assistant', `Sorry, I encountered an error: ${result.error}`) }
-      } catch(e){ addChatMessage('assistant', `Sorry, I'm having connection issues: ${e.message}`) }
+        // Send message via WebSocket if available, otherwise fallback to HTTP
+        if (dataframeWebSocket && dataframeWebSocket.readyState === WebSocket.OPEN) {
+          dataframeWebSocket.send(JSON.stringify({ message, model: selectedLLM }))
+        } else {
+          const resp = await fetch(`${API_BASE}/chat`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ message, model: selectedLLM }) })
+          const result = await resp.json()
+          if (result.success){
+            addChatMessage('assistant', result.message)
+            if (result.dataframe_updated){ pushHistory(); await loadDataPage(1) }
+          } else { addChatMessage('assistant', `Sorry, I encountered an error: ${result.error}`) }
+        }
+      } catch(e){ 
+        addChatMessage('assistant', `Sorry, I'm having connection issues: ${e.message}`)
+        console.error('Chat error:', e)
+      }
       finally{ if (chatSend){ chatSend.disabled = false; chatSend.textContent = prevLabel || 'Send'; chatSend.classList.remove('opacity-70') } }
     }
     if (chatSend) chatSend.addEventListener('click', sendChat)

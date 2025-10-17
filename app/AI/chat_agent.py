@@ -12,14 +12,42 @@ class ConversationState:
         self.dataframe_history = []
 
 class ChatAgent:
-    def __init__(self):
+    def __init__(self, websocket=None):
         self.ollama_url = "http://localhost:11434/api/generate" 
         #qwen3-coder:30b 
         self.ollama_model = "llama3.1:8b"
         self.code_executor = CodeExecutor()
+        self.websocket = websocket
         
         # AUTONOMOUS EXECUTION FEATURE FLAG - Comment this line to disable
         self.ENABLE_AUTONOMOUS_EXECUTION = True
+    
+    async def _emit_dataframe_update(self, df: pd.DataFrame):
+        """Emit simple refresh event to WebSocket client"""
+        print(f"🔄 _emit_dataframe_update called - WebSocket: {self.websocket is not None}, DF: {df is not None}")
+        
+        if self.websocket and df is not None:
+            try:
+                import json
+                
+                message = {
+                    "type": "dataframe_refresh",
+                    "data": {
+                        "message": "Dataframe updated - please refresh"
+                    }
+                }
+                
+                print(f"📤 Sending WebSocket refresh event")
+                await self.websocket.send_text(json.dumps(message))
+                print(f"✅ WebSocket refresh event sent successfully")
+                
+            except Exception as e:
+                print(f"❌ WebSocket emission error: {str(e)}")
+        else:
+            if not self.websocket:
+                print(f"⚠️ No WebSocket connection available")
+            if df is None:
+                print(f"⚠️ DataFrame is None")
         
     async def _get_model_response(self, context: str, message: str, model_type: str = "ollama") -> str:
         full_prompt = f"{context}\n\nUSER: {message}\nASSISTANT:"
@@ -319,6 +347,11 @@ CONVERSATION HISTORY:
             # Update dataframe if execution was successful
             if turn_result.get('has_code') and turn_result.get('execution_result', {}).get('success'):
                 current_df = turn_result['execution_result']['dataframe']
+                print(f"🎯 Turn {turn_count}: Code executed successfully, emitting dataframe update...")
+                # Emit real-time dataframe update to WebSocket
+                await self._emit_dataframe_update(current_df)
+            else:
+                print(f"⏭️ Turn {turn_count}: No code execution or execution failed, skipping dataframe update")
             
             # Add this turn to conversation history
             working_history.append({

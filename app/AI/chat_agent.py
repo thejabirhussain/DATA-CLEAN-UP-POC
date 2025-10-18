@@ -8,7 +8,8 @@ from dataframe_state import DataFrameState
 
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "llama3.1:8b"
+# OLLAMA_MODEL = "llama3.1:8b"
+OLLAMA_MODEL = "qwen3-coder:30b"  # Try this model
 
 SYSTEM_INSTRUCTIONS = """You are an Excel transformer. Your task is to execute Python code to manipulate the given dataframe 'df'.
 
@@ -26,6 +27,7 @@ IMPORTANT RULES:
 3. Wait to see execution results before proceeding
 4. Use print statements to validate each transformation
 5. Only use <exit>message</exit> when ALL tasks are complete
+6. ALWAYS REMEMBER THE ORIGINAL USER REQUEST - Never forget what the user asked you to do. Stay focused on completing those specific tasks.
 
 CODE EXECUTION:
 - Wrap code in ```python blocks
@@ -161,8 +163,16 @@ async def chat(message: str, conversation_history: List[Dict], df_state: DataFra
         print(f"\n========== TURN {turn_count} ==========")
 
         if turn_count == 1:
-            # First turn: Send system instructions + original user message
-            prompt = f"{SYSTEM_INSTRUCTIONS}\n\nUSER: {current_message}\nASSISTANT:"
+            # First turn: Send system instructions + DataFrame info + original user message
+            df_info = f"""
+DATAFRAME INFO:
+Columns: {df_state.get_dataframe().columns.tolist()}
+Shape: {df_state.get_dataframe().shape}
+Data Types: {df_state.get_dataframe().dtypes.to_dict()}
+Sample Data:
+{df_state.get_dataframe().head().to_string()}
+"""
+            prompt = f"{SYSTEM_INSTRUCTIONS}\n{df_info}\nUSER: {current_message}\nASSISTANT:"
         else:
             # Subsequent turns: Only send the execution result
             prompt = f"USER: {current_message}\nASSISTANT:"
@@ -180,7 +190,7 @@ async def chat(message: str, conversation_history: List[Dict], df_state: DataFra
                 "model": OLLAMA_MODEL,
                 "prompt": prompt,
                 "stream": False,
-                "options": {"temperature": 0.3, "num_predict": 600},
+                "options": {"temperature": 0.1, "num_predict": 400},
             },
         ).json()
 

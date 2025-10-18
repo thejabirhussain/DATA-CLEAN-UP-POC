@@ -24,7 +24,7 @@ DATAFRAME INFO:
 {df_info['sample_data']}
 
 RULES:
-1. Generate ONLY executable Python code wrapped in <execute_code> tags
+1. Generate ONLY executable Python code wrapped in ```python code blocks
 2. The DataFrame is available as variable 'df' - this contains the user's data
 3. Modify 'df' in-place or reassign it
 4. Common modules are pre-imported: pandas (as pd), numpy (as np), re, datetime
@@ -36,17 +36,17 @@ EXAMPLES:
 
 User: "Concatenate first name and last name columns"
 Response:
-<execute_code>
+```python
 df['Full Name'] = df['First Name'].astype(str) + ' ' + df['Last Name'].astype(str)
-</execute_code>
+```
 
 User: "Remove rows where email is invalid"
 Response:
-<execute_code>
+```python
 email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}'
 valid_emails = df['Email'].astype(str).str.match(email_pattern, na=False)
 df = df[valid_emails].reset_index(drop=True)
-</execute_code>
+```
 
 Generate code for: "{instruction}"
 """
@@ -72,12 +72,12 @@ Generate code for: "{instruction}"
             start_pos = 0
             
             while True:
-                start = generated_code.find("<execute_code>", start_pos)
+                start = generated_code.find("```python", start_pos)
                 if start == -1:
                     break
                     
-                start += len("<execute_code>")
-                end = generated_code.find("</execute_code>", start)
+                start += len("```python")
+                end = generated_code.find("```", start)
                 if end == -1:
                     break
                     
@@ -85,7 +85,7 @@ Generate code for: "{instruction}"
                 if code_block:
                     code_blocks.append(code_block)
                 
-                start_pos = end + len("</execute_code>")
+                start_pos = end + len("```")
             
             if code_blocks:
                 generated_code = "\n".join(code_blocks)

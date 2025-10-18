@@ -16,6 +16,20 @@ class ChatAgent:
         self.ollama_url = "http://localhost:11434/api/generate" 
         self.ollama_model = "llama3.1:8b"
         self.code_executor = CodeExecutor()
+        self.conversation_log = []
+    
+    def _log_conversation(self, role: str, content: str):
+        """Log conversation entries for debugging"""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.conversation_log.append(f"[{timestamp}] {role.upper()}: {content}")
+    
+    def _save_conversation_log(self):
+        """Save conversation log to file"""
+        try:
+            with open('conversation_log.txt', 'w', encoding='utf-8') as f:
+                f.write('\n\n'.join(self.conversation_log))
+        except Exception as e:
+            print(f"Failed to save conversation log: {str(e)}")
     
 
         
@@ -43,7 +57,16 @@ class ChatAgent:
     async def chat(self, message: str, conversation_history: List[Dict], df: pd.DataFrame = None, model_type: str = "ollama") -> Dict:
         print(f"USER: {message}")
         
-        return await self._autonomous_chat(message, conversation_history, df, model_type)
+        # Log user message
+        self._log_conversation("USER", message)
+        
+        # AUTONOMOUS EXECUTION - Always enabled for all tasks
+        result = await self._autonomous_chat(message, conversation_history, df, model_type)
+        
+        # Save conversation log after completion
+        self._save_conversation_log()
+        
+        return result
         print("------------- MODEL RESPONSE -------------")
         print(response)
         
@@ -139,7 +162,7 @@ class ChatAgent:
 
     
     def _contains_code_execution(self, response: str) -> bool:
-        return ("<execute_code>" in response and "</execute_code>" in response)
+        return ("```python" in response and "```" in response)
     
     def _extract_code_from_response(self, response: str) -> str:
         try:
@@ -147,12 +170,12 @@ class ChatAgent:
             start_pos = 0
             
             while True:
-                start = response.find("<execute_code>", start_pos)
+                start = response.find("```python", start_pos)
                 if start == -1:
                     break
                     
-                start += len("<execute_code>")
-                end = response.find("</execute_code>", start)
+                start += len("```python")
+                end = response.find("```", start)
                 if end == -1:
                     break
                     
@@ -160,7 +183,7 @@ class ChatAgent:
                 if code_block:
                     code_blocks.append(code_block)
                 
-                start_pos = end + len("</execute_code>")
+                start_pos = end + len("```")
             
             return "\n".join(code_blocks) if code_blocks else ""
         except Exception as e:
@@ -168,7 +191,7 @@ class ChatAgent:
     
     def _extract_user_message_from_response(self, response: str) -> str:
         try:
-            code_start = response.find("<execute_code>")
+            code_start = response.find("```python")
             if code_start != -1:
                 return response[:code_start].strip()
             
@@ -237,9 +260,20 @@ class ChatAgent:
             print(f"========== AUTONOMOUS TURN {turn_count} ==========")
             
             context = self._build_autonomous_context(working_history, current_df)
+            
+            # Log system prompt for first turn only
+            if turn_count == 1:
+                self._log_conversation("SYSTEM PROMPT", context)
+            
+            # Log the current message being sent to LLM
+            self._log_conversation("USER", current_message)
+            
             response = await self._get_model_response(context, current_message, model_type)
             print("------------- MODEL RESPONSE -------------")
             print(response)
+            
+            # Log LLM response
+            self._log_conversation("LLM", response)
         
             # Process this turn
             turn_result = await self._process_autonomous_turn(response, current_df, working_history)
@@ -314,6 +348,7 @@ IMPORTANT:
 - Do NOT repeat previous tasks
 - Fix the specific error in your code for this task
 - Use proper pandas syntax and column names
+- Wrap your code in ```python code blocks
 
 CONVERSATION HISTORY:
 """
@@ -338,7 +373,7 @@ DATA FRAME:
 {df_info}
 
 INSTRUCTIONS:
-You need to make code changes by generating and wrapping code in <execute_code> tags, which will then be executed in a Python environment. Common modules like numpy (np), pandas (pd), re have already been imported. You can import any module you require as well, but changes need to be made on the existing 'df' object.
+You need to make code changes by generating and wrapping code in ```python code blocks, which will then be executed in a Python environment. Common modules like numpy (np), pandas (pd), re have already been imported. You can import any module you require as well, but changes need to be made on the existing 'df' object.
 
 TASK CLASSIFICATION:
 Once you get a user query, you need to understand the intent and classify it into the following categories:
@@ -348,9 +383,9 @@ If the user gives you one task or a simple request, handle it directly in one re
 Example:
 User: "Remove the ID column"
 Response: "I'll remove the ID column for you."
-<execute_code>
+```python
 df = df.drop(columns=['ID'])
-</execute_code>
+```
 
 MULTIPLE TASKS:
 If the user gives you multiple numbered tasks (like "1) Do X 2) Do Y 3) Do Z"), you MUST use autonomous execution to handle them one by one across multiple turns.
@@ -365,21 +400,21 @@ Example for multiple tasks:
 User: "1) Delete ID column 2) Clean names 3) Sort by amount"
 
 Turn 1: "I'll start by deleting the ID column."
-<execute_code>
+```python
 df = df.drop(columns=['ID'])
-</execute_code>
+```
 <continue_with>2) Clean names 3) Sort by amount</continue_with>
 
 Turn 2: "Now I'll clean the names."
-<execute_code>
+```python
 df['Name'] = df['Name'].str.strip().str.title()
-</execute_code>
+```
 <continue_with>3) Sort by amount</continue_with>
 
 Turn 3: "Finally, sorting by amount."
-<execute_code>
+```python
 df = df.sort_values('Amount', ascending=False)
-</execute_code>
+```
 All tasks completed!
 
 CONVERSATION HISTORY:
@@ -440,9 +475,17 @@ CONVERSATION HISTORY:
                 
                 # Build task-aware retry context for autonomous execution
                 retry_context = self._build_task_aware_retry_context(history, df, current_response)
+                
+                # Log retry context and error feedback
+                self._log_conversation("RETRY SYSTEM PROMPT", retry_context)
+                self._log_conversation("USER", error_feedback)
+                
                 retry_response = await self._get_model_response(retry_context, error_feedback)
                 print("------------- RETRY RESPONSE -------------")
                 print(retry_response)
+                
+                # Log retry response
+                self._log_conversation("LLM", retry_response)
                 
                 if self._contains_code_execution(retry_response):
                     retry_code = self._extract_code_from_response(retry_response)

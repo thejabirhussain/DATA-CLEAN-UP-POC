@@ -5,8 +5,9 @@ import pytesseract
 from pydantic import BaseModel
 from transform import CoderAgent
 from code_executor import CodeExecutor
-from chat_agent import ChatAgent, ConversationState
+import chat_agent
 from rag import RagSystem
+from dataframe_state import DataFrameState
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,15 +34,16 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 PDF_UPLOAD_FOLDER = 'uploads/pdfs'
 os.makedirs(PDF_UPLOAD_FOLDER, exist_ok=True)
 
-current_dataframe: pd.DataFrame = None
+# Dataframe state management
+df_state = DataFrameState()
+
 # Maintain full history stacks for robust undo/redo
 undo_stack: list[pd.DataFrame] = []
 redo_stack: list[pd.DataFrame] = []
 
 coder_agent = CoderAgent()
 code_executor = CodeExecutor()
-conversation_state = ConversationState()
-chat_agent = ChatAgent()
+conversation_history = []
 
 # RAG system for document Q&A
 rag_system: Optional[RagSystem] = None
@@ -67,7 +69,7 @@ class RagQueryRequest(BaseModel):
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
-    global current_dataframe, undo_stack, redo_stack
+    global undo_stack, redo_stack
     
     if not file.filename.endswith(('.xlsx', '.xls', '.csv')):
         raise HTTPException(status_code=400, detail="Only Excel and CSV files are supported")
@@ -76,24 +78,27 @@ async def upload_file(file: UploadFile = File(...)):
         contents = await file.read()
         
         if file.filename.endswith('.csv'):
-            current_dataframe = pd.read_csv(io.StringIO(contents.decode('utf-8')))
+            uploaded_df = pd.read_csv(io.StringIO(contents.decode('utf-8')))
         else:
-            current_dataframe = pd.read_excel(io.BytesIO(contents))
+            uploaded_df = pd.read_excel(io.BytesIO(contents))
+        
+        # Set dataframe in state
+        df_state.set_dataframe(uploaded_df)
         
         # reset history stacks on new upload
         undo_stack = []
         redo_stack = []
         
         # Save uploaded data to data.csv immediately
-        current_dataframe.to_csv('data.csv', index=False)
+        df_state.get_dataframe().to_csv('data.csv', index=False)
         
         return {
             "message": "File uploaded successfully",
             "filename": file.filename,
-            "shape": current_dataframe.shape,
-            "columns": list(current_dataframe.columns),
-            "preview": safe_to_dict(current_dataframe.head(100)),
-            "total_rows": len(current_dataframe),
+            "shape": df_state.get_dataframe().shape,
+            "columns": list(df_state.get_dataframe().columns),
+            "preview": safe_to_dict(df_state.get_dataframe().head(100)),
+            "total_rows": len(df_state.get_dataframe()),
             "undo_count": len(undo_stack),
             "redo_count": len(redo_stack),
         }
@@ -102,38 +107,38 @@ async def upload_file(file: UploadFile = File(...)):
 
 @app.post("/transform")
 async def transform_data(request: TransformRequest):
-    global current_dataframe, undo_stack, redo_stack
+    global undo_stack, redo_stack
     
     try:
         generated_code = await coder_agent.process_instruction(
             request.instruction, 
-            current_dataframe,
+            df_state.get_dataframe(),
             "ollama"
         )
 
         # push current state to undo stack before applying transformation
-        if current_dataframe is not None:
-            undo_stack.append(current_dataframe.copy())
+        if df_state.has_dataframe():
+            undo_stack.append(df_state.get_dataframe().copy())
             # optional cap to prevent excessive memory
             if len(undo_stack) > 50:
                 undo_stack.pop(0)
         # clear redo history when a new transform occurs
         redo_stack = []
         
-        result_df, execution_log = code_executor.execute_code(generated_code, current_dataframe)
+        result_df, execution_log = code_executor.execute_code(generated_code, df_state.get_dataframe())
         
-        current_dataframe = result_df
-        current_dataframe.to_csv('data.csv', index=False)
+        df_state.update_dataframe(result_df)
+        df_state.get_dataframe().to_csv('data.csv', index=False)
         
         return {
             "success": True,
             "type": "transformation",
             "generated_code": generated_code,
             "execution_log": execution_log,
-            "result_shape": current_dataframe.shape,
-            "result_columns": list(current_dataframe.columns),
-            "preview": safe_to_dict(current_dataframe.head(100)),
-            "total_rows": len(current_dataframe),
+            "result_shape": df_state.get_dataframe().shape,
+            "result_columns": list(df_state.get_dataframe().columns),
+            "preview": safe_to_dict(df_state.get_dataframe().head(100)),
+            "total_rows": len(df_state.get_dataframe()),
             "undo_count": len(undo_stack),
             "redo_count": len(redo_stack),
         }
@@ -146,7 +151,7 @@ async def transform_data(request: TransformRequest):
 
 @app.post("/undo")
 async def undo_last_transformation():
-    global current_dataframe, undo_stack, redo_stack
+    global undo_stack, redo_stack
     if not undo_stack:
         return {
             "success": False,
@@ -157,27 +162,27 @@ async def undo_last_transformation():
 
     print("Undo requested - restoring previous dataframe from stack")
     # move current to redo, pop last undo into current
-    if current_dataframe is not None:
-        redo_stack.append(current_dataframe)
-    current_dataframe = undo_stack.pop()
+    if df_state.has_dataframe():
+        redo_stack.append(df_state.get_dataframe())
+    df_state.update_dataframe(undo_stack.pop())
 
-    current_dataframe.to_csv('data.csv', index=False)
+    df_state.get_dataframe().to_csv('data.csv', index=False)
 
     return {
         "success": True,
         "type": "transformation",
         "message": "Successfully undone last transformation",
-        "result_shape": current_dataframe.shape,
-        "result_columns": list(current_dataframe.columns),
-        "preview": safe_to_dict(current_dataframe.head(100)),
-        "total_rows": len(current_dataframe),
+        "result_shape": df_state.get_dataframe().shape,
+        "result_columns": list(df_state.get_dataframe().columns),
+        "preview": safe_to_dict(df_state.get_dataframe().head(100)),
+        "total_rows": len(df_state.get_dataframe()),
         "undo_count": len(undo_stack),
         "redo_count": len(redo_stack),
     }
 
 @app.post("/redo")
 async def redo_last_undo():
-    global current_dataframe, undo_stack, redo_stack
+    global undo_stack, redo_stack
     if not redo_stack:
         return {
             "success": False,
@@ -188,22 +193,22 @@ async def redo_last_undo():
 
     print("Redo requested - re-applying last undone dataframe from stack")
     # move current to undo, pop last redo into current
-    if current_dataframe is not None:
-        undo_stack.append(current_dataframe)
+    if df_state.has_dataframe():
+        undo_stack.append(df_state.get_dataframe())
         if len(undo_stack) > 50:
             undo_stack.pop(0)
-    current_dataframe = redo_stack.pop()
+    df_state.update_dataframe(redo_stack.pop())
 
-    current_dataframe.to_csv('data.csv', index=False)
+    df_state.get_dataframe().to_csv('data.csv', index=False)
 
     return {
         "success": True,
         "type": "transformation",
         "message": "Successfully redone last undo",
-        "result_shape": current_dataframe.shape,
-        "result_columns": list(current_dataframe.columns),
-        "preview": safe_to_dict(current_dataframe.head(100)),
-        "total_rows": len(current_dataframe),
+        "result_shape": df_state.get_dataframe().shape,
+        "result_columns": list(df_state.get_dataframe().columns),
+        "preview": safe_to_dict(df_state.get_dataframe().head(100)),
+        "total_rows": len(df_state.get_dataframe()),
         "undo_count": len(undo_stack),
         "redo_count": len(redo_stack),
     }
@@ -211,24 +216,22 @@ async def redo_last_undo():
 
 @app.post("/chat")
 async def chat_with_agent(request: ChatRequest):
-    global current_dataframe, conversation_state, undo_stack, redo_stack
+    global conversation_history, undo_stack, redo_stack
     try:
         # record user message
-        conversation_state.messages.append({
+        conversation_history.append({
             'role': 'user',
             'content': request.message,
             'timestamp': datetime.now().isoformat()
         })
 
-        # get assistant response
         response = await chat_agent.chat(
             request.message,
-            conversation_state.messages,
-            current_dataframe
+            conversation_history,
+            df_state
         )
 
-        # record assistant message
-        conversation_state.messages.append({
+        conversation_history.append({
             'role': 'assistant',
             'content': response['message'],
             'code': response.get('code'),
@@ -240,14 +243,14 @@ async def chat_with_agent(request: ChatRequest):
             execution_result = response['execution_result']
             if execution_result.get('success'):
                 # push current to undo stack and clear redo
-                if current_dataframe is not None:
-                    undo_stack.append(current_dataframe.copy())
+                if df_state.has_dataframe():
+                    undo_stack.append(df_state.get_dataframe().copy())
                     if len(undo_stack) > 50:
                         undo_stack.pop(0)
                 redo_stack = []
 
-                current_dataframe = execution_result['dataframe']
-                current_dataframe.to_csv('data.csv', index=False)
+                df_state.update_dataframe(execution_result['dataframe'])
+                df_state.get_dataframe().to_csv('data.csv', index=False)
                 dataframe_updated = True
 
         # sanitize execution_result for response
@@ -279,12 +282,12 @@ async def chat_with_agent(request: ChatRequest):
         }
         
         # Add updated dataframe preview if dataframe was updated
-        if dataframe_updated and current_dataframe is not None:
+        if dataframe_updated and df_state.has_dataframe():
             chat_response.update({
-                'updated_preview': safe_to_dict(current_dataframe.head(100)),
-                'updated_columns': list(current_dataframe.columns),
-                'updated_shape': current_dataframe.shape,
-                'updated_total_rows': len(current_dataframe),
+                'updated_preview': safe_to_dict(df_state.get_dataframe().head(100)),
+                'updated_columns': list(df_state.get_dataframe().columns),
+                'updated_shape': df_state.get_dataframe().shape,
+                'updated_total_rows': len(df_state.get_dataframe()),
             })
         
         return chat_response
@@ -296,11 +299,12 @@ async def chat_with_agent(request: ChatRequest):
 
 @app.get("/data")
 async def get_data_page(page: int = 1, rows_per_page: int = 10):
-    global current_dataframe, undo_stack, redo_stack
-    if current_dataframe is None:
+    global undo_stack, redo_stack
+    if not df_state.has_dataframe():
         raise HTTPException(status_code=400, detail="No data available")
 
-    total_rows = len(current_dataframe)
+    current_df = df_state.get_dataframe()
+    total_rows = len(current_df)
     total_pages = (total_rows + rows_per_page - 1) // rows_per_page
     if total_pages == 0:
         total_pages = 1
@@ -309,11 +313,11 @@ async def get_data_page(page: int = 1, rows_per_page: int = 10):
 
     start_idx = (page - 1) * rows_per_page
     end_idx = min(start_idx + rows_per_page, total_rows)
-    page_data = current_dataframe.iloc[start_idx:end_idx]
+    page_data = current_df.iloc[start_idx:end_idx]
 
     return {
         "data": safe_to_dict(page_data),
-        "columns": list(current_dataframe.columns),
+        "columns": list(current_df.columns),
         "current_page": page,
         "total_pages": total_pages,
         "total_rows": total_rows,
@@ -326,16 +330,16 @@ async def get_data_page(page: int = 1, rows_per_page: int = 10):
 
 @app.get("/chat/history")
 async def get_chat_history():
-    global conversation_state
+    global conversation_history
     return {
-        'messages': conversation_state.messages[-20:],
-        'total_messages': len(conversation_state.messages)
+        'messages': conversation_history[-20:],
+        'total_messages': len(conversation_history)
     }
 
 @app.post("/chat/clear")
 async def clear_chat_history():
-    global conversation_state
-    conversation_state.messages = []
+    global conversation_history
+    conversation_history = []
     return {'success': True, 'message': 'Chat history cleared'}
 
 @app.post("/rag/upload")

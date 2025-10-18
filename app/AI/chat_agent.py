@@ -149,9 +149,10 @@ async def chat(message: str, conversation_history: List[Dict], df_state: DataFra
 
     max_turns = 15
     turn_count = 0
+    current_message = message  # Track the current message to send
     
-    with open("conversation_log.txt", "a", encoding="utf-8") as log_file:
-        log_file.write(f"\n{'='*80}\n")
+    with open("conversation_log.txt", "w", encoding="utf-8") as log_file:
+        log_file.write(f"{'='*80}\n")
         log_file.write(f"NEW CHAT SESSION - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         log_file.write(f"{'='*80}\n\n")
 
@@ -159,13 +160,12 @@ async def chat(message: str, conversation_history: List[Dict], df_state: DataFra
         turn_count += 1
         print(f"\n========== TURN {turn_count} ==========")
 
-        context = SYSTEM_INSTRUCTIONS + "\n\n"
-        for msg in conversation_history[-15:]:
-            role = msg["role"].upper()
-            content = msg["content"]
-            context += f"{role}: {content}\n"
-
-        prompt = f"{context}ASSISTANT:"
+        if turn_count == 1:
+            # First turn: Send system instructions + original user message
+            prompt = f"{SYSTEM_INSTRUCTIONS}\n\nUSER: {current_message}\nASSISTANT:"
+        else:
+            # Subsequent turns: Only send the execution result
+            prompt = f"USER: {current_message}\nASSISTANT:"
         
         with open("conversation_log.txt", "a", encoding="utf-8") as log_file:
             log_file.write(f"\n{'='*80}\n")
@@ -212,7 +212,7 @@ async def chat(message: str, conversation_history: List[Dict], df_state: DataFra
                     "timestamp": datetime.now().isoformat(),
                 }
             )
-            message = "Continue with the task."
+            current_message = "Continue with the task."
             continue
 
         print(f"Executing code:\n{code}")
@@ -229,7 +229,7 @@ async def chat(message: str, conversation_history: List[Dict], df_state: DataFra
                     "timestamp": datetime.now().isoformat(),
                 }
             )
-            message = f"Code executed successfully. Output:\n{output}\n\nContinue."
+            current_message = f"Code executed successfully. Output:\n{output}\n\nContinue."
         else:
             print(f"Failed: {output}")
             conversation_history.append(
@@ -241,7 +241,7 @@ async def chat(message: str, conversation_history: List[Dict], df_state: DataFra
                     "timestamp": datetime.now().isoformat(),
                 }
             )
-            message = f"Code failed with error:\n{output}\n\nFix it and try again."
+            current_message = f"Code failed with error:\n{output}\n\nFix it and try again."
 
     print(f"Max turns ({max_turns}) reached")
     return {

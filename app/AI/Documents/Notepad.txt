@@ -1,3 +1,6 @@
 Issues/To Do---
 
-- Add complete logs of the llm chat history to understadn autonomous and rety mechanisms
+- No Fallback Mechanism for Errors
+- Can Run into Context Overflow
+- No Initial Ollama Availibility Test
+- exit always ends with "All tasks completed", overfitting in system prompt

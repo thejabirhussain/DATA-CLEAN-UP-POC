@@ -8,10 +8,13 @@ import google.generativeai as genai
 from code_executor import CodeExecutor
 from dataframe_state import DataFrameState
 
-# Ollama configuration (commented out for testing)
-# OLLAMA_URL = "http://localhost:11434/api/generate"
-# OLLAMA_MODEL = "llama3.1:8b"
-# OLLAMA_MODEL = "qwen3-coder:30b"
+# Model configuration - switch between Ollama and Gemini
+USE_GEMINI = False  # Set to False to use Ollama
+
+# Ollama configuration
+OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_MODEL = "llama3.1:8b"
+#llama3.1:8b
 
 # Gemini configuration
 GEMINI_API_KEY = "AIzaSyDci0WLzP66KgRRQvF2-4y_TbJBNEOtlH0"
@@ -101,6 +104,44 @@ print(df.head())
 code_executor = CodeExecutor()
 
 
+def format_ollama_conversation(conversation: List[Dict[str, str]]) -> str:
+    """Convert conversation history to Ollama prompt format"""
+    prompt = ""
+    for msg in conversation:
+        if msg["role"] == "system":
+            prompt += msg["content"] + "\n\n"
+        elif msg["role"] == "user":
+            prompt += f"USER: {msg['content']}\n"
+        elif msg["role"] == "assistant":
+            prompt += f"ASSISTANT: {msg['content']}\n"
+    prompt += "ASSISTANT:"
+    return prompt
+
+
+def log_final_conversation_summary(ollama_conversation: Optional[List[Dict[str, str]]]):
+    """Write the final clean conversation summary to the file"""
+    with open("conversation_log.txt", "w", encoding="utf-8") as log_file:
+        log_file.write(f"\n{'='*80}\n")
+        log_file.write(f"FINAL CONVERSATION SUMMARY\n")
+        log_file.write(f"{'='*80}\n\n")
+        
+        if USE_GEMINI:
+            log_file.write("Note: Using Gemini - conversation history managed internally by chat session\n\n")
+        elif ollama_conversation:
+            for i, msg in enumerate(ollama_conversation, 1):
+                role = msg["role"].upper()
+                content = msg["content"]
+                
+                if msg["role"] == "system":
+                    log_file.write(f"SYSTEM INSTRUCTIONS:\n{content}\n\n")
+                else:
+                    log_file.write(f"{role} (Turn {i-1 if role != 'SYSTEM' else 'Setup'}):\n{content}\n\n")
+        
+        log_file.write(f"{'='*80}\n")
+        log_file.write(f"CONVERSATION COMPLETED - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        log_file.write(f"{'='*80}\n")
+
+
 def extract_code_block(response: str) -> Optional[str]:
 
     start = response.find("```python")
@@ -168,22 +209,27 @@ async def chat(message: str, conversation_history: List[Dict], df_state: DataFra
     turn_count = 0
     current_message = message  # Track the current message to send
     
-    # Initialize Gemini chat session once
-    model = genai.GenerativeModel(GEMINI_MODEL)
-    chat_session = model.start_chat()
+    # Initialize model-specific conversation tracking
+    if USE_GEMINI:
+        # Initialize Gemini chat session once
+        model = genai.GenerativeModel(GEMINI_MODEL)
+        chat_session = model.start_chat()
+        ollama_conversation = None
+    else:
+        # Initialize Ollama conversation history
+        chat_session = None
+        ollama_conversation = []
     
-    with open("conversation_log.txt", "w", encoding="utf-8") as log_file:
-        log_file.write(f"{'='*80}\n")
-        log_file.write(f"NEW CHAT SESSION - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        log_file.write(f"{'='*80}\n\n")
+    # We'll write the final conversation summary at the end, not during the process
 
     while turn_count < max_turns:
         turn_count += 1
         print(f"\n========== TURN {turn_count} ==========")
 
-        if turn_count == 1:
-            # First turn: Send system instructions + DataFrame info + original user message
-            df_info = f"""
+        if USE_GEMINI:
+            # Gemini: Use chat session (maintains context automatically)
+            if turn_count == 1:
+                df_info = f"""
 DATAFRAME INFO:
 Columns: {df_state.get_dataframe().columns.tolist()}
 Shape: {df_state.get_dataframe().shape}
@@ -191,51 +237,67 @@ Data Types: {df_state.get_dataframe().dtypes.to_dict()}
 Sample Data:
 {df_state.get_dataframe().head().to_string()}
 """
-            prompt = f"{SYSTEM_INSTRUCTIONS}\n{df_info}\nUSER: {current_message}\nASSISTANT:"
+                prompt = f"{SYSTEM_INSTRUCTIONS}\n{df_info}\nUSER: {current_message}\nASSISTANT:"
+            else:
+                prompt = f"USER: {current_message}\nASSISTANT:"
         else:
-            # Subsequent turns: Only send the execution result
-            prompt = f"USER: {current_message}\nASSISTANT:"
-        
-        with open("conversation_log.txt", "a", encoding="utf-8") as log_file:
-            log_file.write(f"\n{'='*80}\n")
-            log_file.write(f"TURN {turn_count} - INPUT TO LLM\n")
-            log_file.write(f"{'='*80}\n")
-            log_file.write(prompt)
-            log_file.write(f"\n\n")
+            # Ollama: Build full conversation history
+            if turn_count == 1:
+                df_info = f"""
+DATAFRAME INFO:
+Columns: {df_state.get_dataframe().columns.tolist()}
+Shape: {df_state.get_dataframe().shape}
+Data Types: {df_state.get_dataframe().dtypes.to_dict()}
+Sample Data:
+{df_state.get_dataframe().head().to_string()}
+"""
+                # Initialize conversation with system + user message
+                ollama_conversation = [
+                    {"role": "system", "content": f"{SYSTEM_INSTRUCTIONS}\n{df_info}"},
+                    {"role": "user", "content": current_message}
+                ]
+            else:
+                # Add new user message to conversation
+                ollama_conversation.append({"role": "user", "content": current_message})
+            
+            # Convert conversation to Ollama prompt format
+            prompt = format_ollama_conversation(ollama_conversation)
 
-        # Ollama API call (commented out for testing)
-        # response = requests.post(
-        #     OLLAMA_URL,
-        #     json={
-        #         "model": OLLAMA_MODEL,
-        #         "prompt": prompt,
-        #         "stream": False,
-        #         "options": {"temperature": 0.1, "num_predict": 400},
-        #     },
-        # ).json()
-        # llm_response = response.get("response", "")
 
-        # Gemini API call using chat session for context continuity
-        response = chat_session.send_message(
-            prompt,
-            generation_config=genai.types.GenerationConfig(
-                temperature=0.1,
-                max_output_tokens=400,
+        if USE_GEMINI:
+            # Gemini API call using chat session for context continuity
+            response = chat_session.send_message(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.1,
+                    max_output_tokens=400,
+                )
             )
-        )
-        llm_response = response.text
+            llm_response = response.text
+        else:
+            # Ollama API call with full conversation history
+            response = requests.post(
+                OLLAMA_URL,
+                json={
+                    "model": OLLAMA_MODEL,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {"temperature": 0.1, "num_predict": 400},
+                },
+            ).json()
+            llm_response = response.get("response", "")
+            
+            # Add assistant response to Ollama conversation history
+            ollama_conversation.append({"role": "assistant", "content": llm_response})
         print(f"LLM Response: {llm_response}")
-        
-        with open("conversation_log.txt", "a", encoding="utf-8") as log_file:
-            log_file.write(f"{'='*80}\n")
-            log_file.write(f"TURN {turn_count} - OUTPUT FROM LLM\n")
-            log_file.write(f"{'='*80}\n")
-            log_file.write(llm_response)
-            log_file.write(f"\n\n")
 
         exit_message = extract_exit_message(llm_response)
         if exit_message:
             print(f"Exit detected: {exit_message}")
+            
+            # Log final conversation summary
+            log_final_conversation_summary(ollama_conversation if not USE_GEMINI else None)
+            
             return {
                 "message": exit_message,
                 "has_code": True,
@@ -283,6 +345,10 @@ Sample Data:
             current_message = f"Code failed with error:\n{output}\n\nFix it and try again."
 
     print(f"Max turns ({max_turns}) reached")
+    
+    # Log final conversation summary
+    log_final_conversation_summary(ollama_conversation if not USE_GEMINI else None)
+    
     return {
         "message": "Task execution stopped - maximum turns reached.",
         "has_code": False,

@@ -3,23 +3,12 @@ import pandas as pd
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import re
-import os
-import google.generativeai as genai
 from code_executor import CodeExecutor
 from dataframe_state import DataFrameState
-
-# Model configuration - switch between Ollama and Gemini
-USE_GEMINI = False  # Set to False to use Ollama
 
 # Ollama configuration
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3.1:8b"
-#llama3.1:8b
-
-# Gemini configuration
-GEMINI_API_KEY = "AIzaSyDci0WLzP66KgRRQvF2-4y_TbJBNEOtlH0"
-genai.configure(api_key=GEMINI_API_KEY)
-GEMINI_MODEL = "gemini-2.0-flash-exp"
 
 SYSTEM_INSTRUCTIONS = """You are an Excel transformer. Your task is to execute Python code to manipulate the given dataframe 'df'.
 
@@ -125,9 +114,7 @@ def log_final_conversation_summary(ollama_conversation: Optional[List[Dict[str, 
         log_file.write(f"FINAL CONVERSATION SUMMARY\n")
         log_file.write(f"{'='*80}\n\n")
         
-        if USE_GEMINI:
-            log_file.write("Note: Using Gemini - conversation history managed internally by chat session\n\n")
-        elif ollama_conversation:
+        if ollama_conversation:
             for i, msg in enumerate(ollama_conversation, 1):
                 role = msg["role"].upper()
                 content = msg["content"]
@@ -209,16 +196,8 @@ async def chat(message: str, conversation_history: List[Dict], df_state: DataFra
     turn_count = 0
     current_message = message  # Track the current message to send
     
-    # Initialize model-specific conversation tracking
-    if USE_GEMINI:
-        # Initialize Gemini chat session once
-        model = genai.GenerativeModel(GEMINI_MODEL)
-        chat_session = model.start_chat()
-        ollama_conversation = None
-    else:
-        # Initialize Ollama conversation history
-        chat_session = None
-        ollama_conversation = []
+    # Initialize Ollama conversation history
+    ollama_conversation = []
     
     # We'll write the final conversation summary at the end, not during the process
 
@@ -226,10 +205,9 @@ async def chat(message: str, conversation_history: List[Dict], df_state: DataFra
         turn_count += 1
         print(f"\n========== TURN {turn_count} ==========")
 
-        if USE_GEMINI:
-            # Gemini: Use chat session (maintains context automatically)
-            if turn_count == 1:
-                df_info = f"""
+        # Ollama: Build full conversation history
+        if turn_count == 1:
+            df_info = f"""
 DATAFRAME INFO:
 Columns: {df_state.get_dataframe().columns.tolist()}
 Shape: {df_state.get_dataframe().shape}
@@ -237,58 +215,33 @@ Data Types: {df_state.get_dataframe().dtypes.to_dict()}
 Sample Data:
 {df_state.get_dataframe().head().to_string()}
 """
-                prompt = f"{SYSTEM_INSTRUCTIONS}\n{df_info}\nUSER: {current_message}\nASSISTANT:"
-            else:
-                prompt = f"USER: {current_message}\nASSISTANT:"
+            # Initialize conversation with system + user message
+            ollama_conversation = [
+                {"role": "system", "content": f"{SYSTEM_INSTRUCTIONS}\n{df_info}"},
+                {"role": "user", "content": current_message}
+            ]
         else:
-            # Ollama: Build full conversation history
-            if turn_count == 1:
-                df_info = f"""
-DATAFRAME INFO:
-Columns: {df_state.get_dataframe().columns.tolist()}
-Shape: {df_state.get_dataframe().shape}
-Data Types: {df_state.get_dataframe().dtypes.to_dict()}
-Sample Data:
-{df_state.get_dataframe().head().to_string()}
-"""
-                # Initialize conversation with system + user message
-                ollama_conversation = [
-                    {"role": "system", "content": f"{SYSTEM_INSTRUCTIONS}\n{df_info}"},
-                    {"role": "user", "content": current_message}
-                ]
-            else:
-                # Add new user message to conversation
-                ollama_conversation.append({"role": "user", "content": current_message})
-            
-            # Convert conversation to Ollama prompt format
-            prompt = format_ollama_conversation(ollama_conversation)
+            # Add new user message to conversation
+            ollama_conversation.append({"role": "user", "content": current_message})
+        
+        # Convert conversation to Ollama prompt format
+        prompt = format_ollama_conversation(ollama_conversation)
 
 
-        if USE_GEMINI:
-            # Gemini API call using chat session for context continuity
-            response = chat_session.send_message(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.1,
-                    max_output_tokens=400,
-                )
-            )
-            llm_response = response.text
-        else:
-            # Ollama API call with full conversation history
-            response = requests.post(
-                OLLAMA_URL,
-                json={
-                    "model": OLLAMA_MODEL,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 400},
-                },
-            ).json()
-            llm_response = response.get("response", "")
-            
-            # Add assistant response to Ollama conversation history
-            ollama_conversation.append({"role": "assistant", "content": llm_response})
+        # Ollama API call with full conversation history
+        response = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": OLLAMA_MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "options": {"temperature": 0.1, "num_predict": 400},
+            },
+        ).json()
+        llm_response = response.get("response", "")
+        
+        # Add assistant response to Ollama conversation history
+        ollama_conversation.append({"role": "assistant", "content": llm_response})
         print(f"LLM Response: {llm_response}")
 
         exit_message = extract_exit_message(llm_response)
@@ -296,7 +249,7 @@ Sample Data:
             print(f"Exit detected: {exit_message}")
             
             # Log final conversation summary
-            log_final_conversation_summary(ollama_conversation if not USE_GEMINI else None)
+            log_final_conversation_summary(ollama_conversation)
             
             return {
                 "message": exit_message,
@@ -347,7 +300,7 @@ Sample Data:
     print(f"Max turns ({max_turns}) reached")
     
     # Log final conversation summary
-    log_final_conversation_summary(ollama_conversation if not USE_GEMINI else None)
+    log_final_conversation_summary(ollama_conversation)
     
     return {
         "message": "Task execution stopped - maximum turns reached.",

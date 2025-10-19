@@ -4,3 +4,4 @@ Issues/To Do---
 - Can Run into Context Overflow
 - No Initial Ollama Availibility Test
 - exit always ends with "All tasks completed", overfitting in system prompt
+- LLM must be able to ask questions when in doubt

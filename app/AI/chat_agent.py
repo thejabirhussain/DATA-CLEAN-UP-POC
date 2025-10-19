@@ -3,13 +3,20 @@ import pandas as pd
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import re
+import os
+import google.generativeai as genai
 from code_executor import CodeExecutor
 from dataframe_state import DataFrameState
 
-
-OLLAMA_URL = "http://localhost:11434/api/generate"
+# Ollama configuration (commented out for testing)
+# OLLAMA_URL = "http://localhost:11434/api/generate"
 # OLLAMA_MODEL = "llama3.1:8b"
-OLLAMA_MODEL = "qwen3-coder:30b"  # Try this model
+# OLLAMA_MODEL = "qwen3-coder:30b"
+
+# Gemini configuration
+GEMINI_API_KEY = "AIzaSyDci0WLzP66KgRRQvF2-4y_TbJBNEOtlH0"
+genai.configure(api_key=GEMINI_API_KEY)
+GEMINI_MODEL = "gemini-2.0-flash-exp"
 
 SYSTEM_INSTRUCTIONS = """You are an Excel transformer. Your task is to execute Python code to manipulate the given dataframe 'df'.
 
@@ -137,6 +144,14 @@ def execute_code(code: str, df_state: DataFrameState) -> tuple[bool, Optional[st
         return False, error_msg
 
     df_state.update_dataframe(result_df)
+    
+    # Always save to data.csv after successful code execution
+    try:
+        df_state.get_dataframe().to_csv('data.csv', index=False)
+        print(f"✓ Data saved to data.csv - Shape: {df_state.get_dataframe().shape}")
+    except Exception as e:
+        print(f"⚠ Warning: Could not save to data.csv: {e}")
+    
     return True, output_msg
 
 
@@ -152,6 +167,10 @@ async def chat(message: str, conversation_history: List[Dict], df_state: DataFra
     max_turns = 15
     turn_count = 0
     current_message = message  # Track the current message to send
+    
+    # Initialize Gemini chat session once
+    model = genai.GenerativeModel(GEMINI_MODEL)
+    chat_session = model.start_chat()
     
     with open("conversation_log.txt", "w", encoding="utf-8") as log_file:
         log_file.write(f"{'='*80}\n")
@@ -184,17 +203,27 @@ Sample Data:
             log_file.write(prompt)
             log_file.write(f"\n\n")
 
-        response = requests.post(
-            OLLAMA_URL,
-            json={
-                "model": OLLAMA_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "options": {"temperature": 0.1, "num_predict": 400},
-            },
-        ).json()
+        # Ollama API call (commented out for testing)
+        # response = requests.post(
+        #     OLLAMA_URL,
+        #     json={
+        #         "model": OLLAMA_MODEL,
+        #         "prompt": prompt,
+        #         "stream": False,
+        #         "options": {"temperature": 0.1, "num_predict": 400},
+        #     },
+        # ).json()
+        # llm_response = response.get("response", "")
 
-        llm_response = response.get("response", "")
+        # Gemini API call using chat session for context continuity
+        response = chat_session.send_message(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.1,
+                max_output_tokens=400,
+            )
+        )
+        llm_response = response.text
         print(f"LLM Response: {llm_response}")
         
         with open("conversation_log.txt", "a", encoding="utf-8") as log_file:

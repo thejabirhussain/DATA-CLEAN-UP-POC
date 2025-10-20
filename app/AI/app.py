@@ -12,6 +12,8 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from starlette.concurrency import run_in_threadpool
+
 from typing import Optional
 from datetime import datetime
 from werkzeug.utils import secure_filename
@@ -225,7 +227,8 @@ async def chat_with_agent(request: ChatRequest):
             'timestamp': datetime.now().isoformat()
         })
 
-        response = await chat_agent.chat(
+        response = await run_in_threadpool(
+            chat_agent.chat,
             request.message,
             conversation_history,
             df_state

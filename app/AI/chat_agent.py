@@ -185,7 +185,7 @@ def execute_code(code: str, df_state: DataFrameState) -> tuple[bool, Optional[st
 
 
 
-async def chat(message: str, conversation_history: List[Dict], df_state: DataFrameState) -> Dict[str, Any]:
+def chat(message: str, conversation_history: List[Dict], df_state: DataFrameState) -> Dict[str, Any]:
     if not df_state.has_dataframe():
         return {
             "message": "No dataframe available. Please upload a file first.",

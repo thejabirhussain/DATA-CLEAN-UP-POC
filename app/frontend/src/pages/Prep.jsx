@@ -304,6 +304,8 @@ export default function Prep(){
     async function submitFollowup(){
       if (!sessionId){ setTransformStatus('No active session for follow-up', 'error'); return }
       const startTime = performance.now(); transformLoading = true
+      // Start live polling so intermediate backend updates from follow-up are reflected immediately
+      startLivePolling()
       try{
         const answers = Array.from(followupQsEl?.querySelectorAll('textarea')||[]).map(t => t.value)
         const resp = await fetch(`${API_BASE}/follow-up`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ session_id: sessionId, responses: answers }) })
@@ -412,6 +414,8 @@ export default function Prep(){
       addChatMessage('user', message); chatInput.value = ''
       const prevLabel = chatSend ? chatSend.textContent : ''
       if (chatSend){ chatSend.disabled = true; chatSend.textContent = 'Sending…'; chatSend.classList.add('opacity-70') }
+      // Start live polling so intermediate backend updates are reflected immediately
+      startLivePolling()
       
       try{
         // Send message via HTTP

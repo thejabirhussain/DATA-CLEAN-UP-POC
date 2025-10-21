@@ -11,6 +11,8 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3.1:8b"
 #qwen3-coder:30b
 #llama3.1:8b
+#deepseek-r1:14b
+
 SYSTEM_INSTRUCTIONS = """You are an Excel transformer. Your task is to execute Python code to manipulate the given dataframe 'df'.
 
 HOW THIS WORKS - ITERATIVE EXECUTION:
@@ -117,7 +119,7 @@ def log_final_conversation_summary(ollama_conversation: Optional[List[Dict[str, 
                 if msg["role"] == "system":
                     log_file.write(f"SYSTEM INSTRUCTIONS:\n{content}\n\n")
                 elif msg["role"] == "user":
-                    log_file.write(f"USER REQUEST:\n{content}\n\n")
+                    log_file.write(f"USER:\n{content}\n\n")
                 else:  # assistant
                     # Count only assistant turns
                     assistant_turn = sum(1 for m in ollama_conversation[:i] if m["role"] == "assistant")
@@ -221,7 +223,7 @@ def chat(message: str, conversation_history: List[Dict], df_state: DataFrameStat
     # We'll write the final conversation summary at the end, not during the process
 
     while turn_count < max_turns:
-        print(f"\n========== PREPARING LLM REQUEST ==========")
+        print(f"\n====================")
 
         # Ollama: Build full conversation history
         if turn_count == 0:

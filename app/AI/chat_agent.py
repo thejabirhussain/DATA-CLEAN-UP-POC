@@ -9,7 +9,8 @@ from dataframe_state import DataFrameState
 # Ollama configuration
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3.1:8b"
-
+#qwen3-coder:30b
+#llama3.1:8b
 SYSTEM_INSTRUCTIONS = """You are an Excel transformer. Your task is to execute Python code to manipulate the given dataframe 'df'.
 
 HOW THIS WORKS - ITERATIVE EXECUTION:
@@ -18,16 +19,15 @@ HOW THIS WORKS - ITERATIVE EXECUTION:
 - After you respond, your code will be executed
 - You will receive the output/result in the next turn
 - Based on that result, you decide the next step
-- Control stays with you until you use the <exit> tag
+- Control stays with you until you use the <exit> </exit> tags
 
 IMPORTANT RULES:
 1. Write ONLY ONE ```python code block per response
-2. Do NOT try to complete all tasks in one turn
-3. Wait to see execution results before proceeding
-4. Use minimal print statements - only for initial data inspection or final verification
-5. Use <exit>SUMMARY: [What you accomplished] - Original request: [user's original message]</exit> when ALL tasks are complete
-6. ALWAYS REMEMBER THE ORIGINAL USER REQUEST - Never forget what the user asked you to do. Stay focused on completing those specific tasks.
-7. COMPLETE THE TASK AND EXIT - Do not perform additional transformations unless specifically requested. Use <exit> immediately after completing the user's request.
+2. Wait to see execution results before proceeding
+3. Use minimal print statements - only for initial data inspection or final verification
+4. Use <exit>[Direct response to user]</exit> when ALL tasks are complete - respond naturally to what the user asked, not always with a summary
+5. ALWAYS REMEMBER THE ORIGINAL USER REQUEST - Never forget what the user asked you to do. Stay focused on completing those specific tasks.
+6. COMPLETE THE TASK AND EXIT - Do not perform additional transformations unless specifically requested. Use <exit> immediately after completing the user's request.
 
 CODE EXECUTION:
 - Wrap code in ```python blocks
@@ -38,12 +38,12 @@ CODE EXECUTION:
 WORKFLOW:
 1. If needed, briefly inspect the data structure
 2. Execute the requested transformation
-3. Use <exit> when the specific task is complete
+3. When the specific task is complete, wrap your final message to the user in <exit>your message</exit> tags
 4. Do NOT explore or modify data beyond what was requested
 
 EXAMPLES:
 
-Simple task:
+EXAMPLE 1:
 User: "Remove the ID column"
 
 Turn 1: "Removing the ID column."
@@ -51,28 +51,35 @@ Turn 1: "Removing the ID column."
 df = df.drop(columns=['ID'])
 print(f"Removed ID column. New shape: {df.shape}")
 ```
-<exit>SUMMARY: Successfully removed the ID column from the dataframe. Original request: Remove the ID column</exit>
+<exit>Done! Removed the ID column.</exit>
 
-Complex task:
-User: "1) Remove ID 2) Clean names 3) Sort by amount"
+EXAMPLE 2:
+User: "Remove record_id column, rename Legal Entity to Legal and make Entity ID lowercase"
 
-Turn 1: "Removing ID column."
+Turn 1: "Removing the record_id column."
 ```python
-df = df.drop(columns=['ID'])
-print(f"Shape after removing ID: {df.shape}")
+df = df.drop(columns=['record_id'])
+print(f"Shape after dropping record_id: {df.shape}")
 ```
 
-Turn 2: "Cleaning names."
+Turn 2: "Renaming Legal Entity to Legal."
 ```python
-df['Name'] = df['Name'].str.strip().str.title()
+df = df.rename(columns={'Legal Entity': 'Legal'})
+print(f"Renamed column. New columns: {list(df.columns)}")
 ```
 
-Turn 3: "Sorting by amount."
+Turn 3: "Making Entity ID values lowercase."
 ```python
-df = df.sort_values('Amount', ascending=False)
-print(f"Sorted by amount. Top value: {df['Amount'].iloc[0]}")
+df['Entity ID'] = df['Entity ID'].str.lower()
+print(f"Entity ID values are now lowercase")
 ```
-<exit>SUMMARY: Completed all 3 tasks - removed ID column, cleaned names with proper formatting, and sorted by amount in descending order. Original request: 1) Remove ID 2) Clean names 3) Sort by amount</exit>
+<exit>Completed all 3 tasks - removed record_id column, renamed Legal Entity to Legal, and made Entity ID lowercase.</exit>
+
+RESPOND NATURALLY - Match the user's tone and question type:
+- Direct requests → Confirmation ("Done!", "Fixed!", "Completed!")
+- Questions → Direct answers ("Yes", "No", "The column has X rows")
+- Corrections → Acknowledgment ("Fixed!", "Corrected!", "Updated!")
+- Complex tasks → Brief summary of what was accomplished
 """
 
 code_executor = CodeExecutor()
@@ -281,7 +288,7 @@ Sample Data:
                     "timestamp": datetime.now().isoformat(),
                 }
             )
-            current_message = "Continue with the task."
+            current_message = "Please provide the code to execute the task."
             continue
 
         print(f"Executing code:\n{code}")
@@ -298,7 +305,7 @@ Sample Data:
                     "timestamp": datetime.now().isoformat(),
                 }
             )
-            current_message = f"Code executed successfully. Output:\n{output}\n\nContinue."
+            current_message = f"Code executed successfully. Output:\n{output}"
         else:
             print(f"Failed: {output}")
             conversation_history.append(

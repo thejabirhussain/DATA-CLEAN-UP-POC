@@ -12,6 +12,8 @@ import logging
 import fitz
 import chromadb
 from chromadb.utils import embedding_functions
+from abc import ABC, abstractmethod
+import requests
 
 # Configure logging for LLM responses
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -284,19 +286,68 @@ class TableExtractor:
         }
 
 
+class LLMProvider(ABC):
+    """Abstract base class for LLM providers"""
+    
+    @abstractmethod
+    def generate(self, prompt: str) -> str:
+        """Generate response from the LLM"""
+        pass
+
+
+class GeminiProvider(LLMProvider):
+    """Gemini LLM provider"""
+    
+    def __init__(self, api_key: str, model: str = "gemini-2.0-flash-exp"):
+        genai.configure(api_key=api_key)
+        self.model = genai.GenerativeModel(model)
+        self.model_name = model
+    
+    def generate(self, prompt: str) -> str:
+        response = self.model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                max_output_tokens=1500,
+                temperature=0.2
+            )
+        )
+        return response.text
+
+
+class OllamaProvider(LLMProvider):
+    """Ollama LLM provider"""
+    
+    def __init__(self, model: str = "llama3.1:8b", base_url: str = "http://localhost:11434"):
+        self.model = model
+        self.base_url = base_url
+        self.model_name = model
+    
+    def generate(self, prompt: str) -> str:
+        response = requests.post(
+            f"{self.base_url}/api/generate",
+            json={
+                "model": self.model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.2,
+                    "num_predict": 1500
+                }
+            }
+        )
+        response.raise_for_status()
+        return response.json()["response"]
+
+
 class RagSystem:
-    def __init__(self, gemini_api_key: str, model: str = "gemini-2.0-flash-exp"):
+    def __init__(self, llm_provider: LLMProvider):
         self.pdf_processor = PDFScreenshotProcessor()
         self.chunker = ChunkStrategy(chunk_size=1000, chunk_overlap=200)
         self.vector_db = VectorDatabaseManager(collection_name="pdf_screenshots")
         self.tables_by_page = {}
         self.pdf_path = None
         self.conversation_history = []
-        self.model_name = model
-        
-        # Gemini setup
-        genai.configure(api_key=gemini_api_key)
-        self.model = genai.GenerativeModel(model)
+        self.llm_provider = llm_provider
 
     def index_pdf(self, pdf_path: str) -> None:
         print("Embedding uploaded data...")
@@ -326,7 +377,7 @@ class RagSystem:
         self.conversation_history = []
         print("Data embedding complete")
 
-    def query(self, query_text: str, n_results: int = 5) -> str:
+    def query(self, query_text: str, n_results: int = 1) -> str:
         # Check for page-specific filters
         filters = {}
         if "page" in query_text.lower():
@@ -395,16 +446,8 @@ class RagSystem:
         )
         
         try:
-            # Make request to Gemini
-            response = self.model.generate_content(
-                f"{SYSTEM_PROMPT}\n\n{user_message}",
-                generation_config=genai.types.GenerationConfig(
-                    max_output_tokens=1500,
-                    temperature=0.2
-                )
-            )
-            
-            answer = response.text
+            # Make request to LLM
+            answer = self.llm_provider.generate(f"{SYSTEM_PROMPT}\n\n{user_message}")
             
             if self.pdf_path:
                 pdf_filename = os.path.basename(self.pdf_path)

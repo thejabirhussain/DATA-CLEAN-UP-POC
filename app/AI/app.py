@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from transform import CoderAgent
 from code_executor import CodeExecutor
 import chat_agent
-from rag import RagSystem
+from rag import RagSystem, GeminiProvider, OllamaProvider
 from dataframe_state import DataFrameState
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -49,7 +49,7 @@ conversation_history = []
 
 # RAG system for document Q&A
 rag_system: Optional[RagSystem] = None
-gemini_api_key = os.getenv("GEMINI_API_KEY", "AIzaSyC5OZ6UW4rAgAunXVcaP-ZihOnJQgOLbG4")
+gemini_api_key = os.getenv("GEMINI_API_KEY", "AIzaSyCTRjUSTunsOVrnNuLyz0_Nlb1kVrEWo8U")
 
 def safe_to_dict(df: pd.DataFrame, orient='records'):
     df_clean = df.copy()
@@ -362,10 +362,8 @@ async def upload_pdf(file: UploadFile = File(...)):
             f.write(contents)
         
         # Initialize RAG system and index the PDF
-        rag_system = RagSystem(
-            gemini_api_key=gemini_api_key,
-            model="gemini-2.0-flash-exp"
-        )
+        llm_provider = GeminiProvider(api_key=gemini_api_key, model="gemini-2.0-flash-exp")
+        rag_system = RagSystem(llm_provider=llm_provider)
         rag_system.index_pdf(filepath)
         
         return {

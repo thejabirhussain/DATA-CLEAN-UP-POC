@@ -38,8 +38,7 @@ Your task is to:
 6. If there are OCR errors in the context, try to infer the correct meaning
 7. Explain concepts simply and clearly
 8. Don't copy text directly from context - interpret and explain the meaning
-9. Include a confidence score (0-100%) at the end of your response
-10. Consider previous conversation when relevant for follow-up questions
+9. Consider previous conversation when relevant for follow-up questions
 
 Remember to cite your sources clearly using page numbers in the format: [Page X]"""
 
@@ -54,8 +53,7 @@ CURRENT QUESTION:
 Please answer the question based on the provided context information.
 Format your answer with clear citations to page numbers in [Page X] format.
 If tables are relevant to the answer, refer to them specifically.
-If this appears to be a follow-up to a previous question, take that previous into account.
-End your response with a confidence score (0-100%) that reflects how well the context answers the question."""
+If this appears to be a follow-up to a previous question, take that previous into account."""
 
 
 class PDFScreenshotProcessor:
@@ -378,6 +376,11 @@ class RagSystem:
         print("Data embedding complete")
 
     def query(self, query_text: str, n_results: int = 1) -> str:
+        print("\n" + "="*80)
+        print("USER QUESTION:")
+        print(query_text)
+        print("="*80)
+        
         # Check for page-specific filters
         filters = {}
         if "page" in query_text.lower():
@@ -399,10 +402,16 @@ class RagSystem:
         context_parts = []
         page_nums = set()
         
+        print("\nRETRIEVED CHUNKS:")
+        print("-"*80)
         for i in range(len(results["ids"][0])):
             document = results["documents"][0][i]
             metadata = results["metadatas"][0][i]
             page_num = metadata.get('page_num', 'unknown')
+            
+            print(f"\nChunk {i+1} (Page {page_num}):")
+            print(document[:300] + "..." if len(document) > 300 else document)
+            print("-"*80)
             
             if page_num != 'unknown':
                 page_nums.add(str(page_num))
@@ -448,6 +457,11 @@ class RagSystem:
         try:
             # Make request to LLM
             answer = self.llm_provider.generate(f"{SYSTEM_PROMPT}\n\n{user_message}")
+            
+            print("\nLLM RESPONSE:")
+            print("="*80)
+            print(answer)
+            print("="*80 + "\n")
             
             if self.pdf_path:
                 pdf_filename = os.path.basename(self.pdf_path)

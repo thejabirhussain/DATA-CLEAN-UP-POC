@@ -362,7 +362,7 @@ async def upload_pdf(file: UploadFile = File(...)):
             f.write(contents)
         
         # Initialize RAG system and index the PDF
-        llm_provider = GeminiProvider(api_key=gemini_api_key, model="gemini-2.0-flash-exp")
+        llm_provider = OllamaProvider(model="llama3.1:8b")
         rag_system = RagSystem(llm_provider=llm_provider)
         rag_system.index_pdf(filepath)
         

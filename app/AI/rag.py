@@ -6,41 +6,35 @@ import shutil
 import textwrap
 import pytesseract
 from PIL import Image
-import google.generativeai as genai
 from typing import List, Dict, Any, Optional
-import logging
 import fitz
 import chromadb
 from chromadb.utils import embedding_functions
-from abc import ABC, abstractmethod
 import requests
+import warnings
 
-# Configure logging for LLM responses
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-# Suppress other library logs
-logging.getLogger('google').setLevel(logging.ERROR)
-logging.getLogger('urllib3').setLevel(logging.ERROR)
-logging.getLogger('requests').setLevel(logging.ERROR)
+# Suppress warnings and library logs
+warnings.filterwarnings('ignore')
 os.environ['GRPC_VERBOSITY'] = 'ERROR'
 os.environ['GLOG_minloglevel'] = '2'
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+os.environ['ANONYMIZED_TELEMETRY'] = 'False'
 
 SYSTEM_PROMPT = """You are an AI assistant specializing in answering questions about documents.
 You will receive context information extracted from PDF documents and possibly structured table data, along with a question and any previous conversation history.
 
 Your task is to:
-1. Answer based ONLY on the information provided in the context
-2. Keep answers human-readable, short and concise
-3. If the context doesn't contain enough information, acknowledge the limitations
-4. Cite specific pages when referencing information (e.g., "According to page 3...")
-5. When referencing tables, cite the table title and page number
-6. If there are OCR errors in the context, try to infer the correct meaning
-7. Explain concepts simply and clearly
-8. Don't copy text directly from context - interpret and explain the meaning
-9. Consider previous conversation when relevant for follow-up questions
+1. Read and understand the context information provided
+2. Answer the user's question in your own words based on what you learned from the context
+3. DO NOT quote or copy text directly from the context - synthesize and explain naturally
+4. Keep answers VERY SHORT and CONCISE - provide only the essential information requested
+5. Avoid redundant explanations or elaboration unless specifically asked
+6. If the context doesn't contain enough information, acknowledge the limitations briefly
+7. Cite specific pages when referencing information using the format [Page X]
+8. When referencing tables, mention the relevant data naturally without quoting
+9. If there are OCR errors in the context, try to infer the correct meaning
 
-Remember to cite your sources clearly using page numbers in the format: [Page X]"""
+IMPORTANT: Answer as if you've read and understood the document yourself. Be conversational, direct, and natural while staying accurate."""
 
 USER_MESSAGE_TEMPLATE = """CONTEXT INFORMATION:
 {context}
@@ -50,11 +44,12 @@ USER_MESSAGE_TEMPLATE = """CONTEXT INFORMATION:
 CURRENT QUESTION:
 {query_text}
 
-Please answer the question based on the provided context information.
-Format your answer with clear citations to page numbers in [Page X] format.
-If tables are relevant to the answer, refer to them specifically.
-If this appears to be a follow-up to a previous question, take that previous into account."""
-
+Read the context information above and answer the user's question naturally in your own words.
+Do NOT quote or copy text from the context - explain what yothout unnecessary elaboration.
+Format your answer with clear citations to page numbers in [Page X] d from it.
+Be CONCISE and DIRECT - provide only the essential answer without unnecessary elaboration.
+Include page citations in [Page X] format where relevant.
+If this appears to be a follow-up to a previous question, take that previous conversation into account."""
 
 class PDFScreenshotProcessor:
     def __init__(self, dpi: int = 300):
@@ -284,68 +279,16 @@ class TableExtractor:
         }
 
 
-class LLMProvider(ABC):
-    """Abstract base class for LLM providers"""
-    
-    @abstractmethod
-    def generate(self, prompt: str) -> str:
-        """Generate response from the LLM"""
-        pass
-
-
-class GeminiProvider(LLMProvider):
-    """Gemini LLM provider"""
-    
-    def __init__(self, api_key: str, model: str = "gemini-2.0-flash-exp"):
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel(model)
-        self.model_name = model
-    
-    def generate(self, prompt: str) -> str:
-        response = self.model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(
-                max_output_tokens=1500,
-                temperature=0.2
-            )
-        )
-        return response.text
-
-
-class OllamaProvider(LLMProvider):
-    """Ollama LLM provider"""
-    
-    def __init__(self, model: str = "llama3.1:8b", base_url: str = "http://localhost:11434"):
-        self.model = model
-        self.base_url = base_url
-        self.model_name = model
-    
-    def generate(self, prompt: str) -> str:
-        response = requests.post(
-            f"{self.base_url}/api/generate",
-            json={
-                "model": self.model,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.2,
-                    "num_predict": 1500
-                }
-            }
-        )
-        response.raise_for_status()
-        return response.json()["response"]
-
-
 class RagSystem:
-    def __init__(self, llm_provider: LLMProvider):
+    def __init__(self, model: str = "llama3.1:8b", base_url: str = "http://localhost:11434"):
         self.pdf_processor = PDFScreenshotProcessor()
         self.chunker = ChunkStrategy(chunk_size=1000, chunk_overlap=200)
         self.vector_db = VectorDatabaseManager(collection_name="pdf_screenshots")
         self.tables_by_page = {}
         self.pdf_path = None
         self.conversation_history = []
-        self.llm_provider = llm_provider
+        self.model = model
+        self.base_url = base_url
 
     def index_pdf(self, pdf_path: str) -> None:
         print("Embedding uploaded data...")
@@ -455,8 +398,21 @@ class RagSystem:
         )
         
         try:
-            # Make request to LLM
-            answer = self.llm_provider.generate(f"{SYSTEM_PROMPT}\n\n{user_message}")
+            # Make request to Ollama
+            response = requests.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": f"{SYSTEM_PROMPT}\n\n{user_message}",
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.2,
+                        "num_predict": 1500
+                    }
+                }
+            )
+            response.raise_for_status()
+            answer = response.json()["response"]
             
             print("\nLLM RESPONSE:")
             print("="*80)

@@ -6,101 +6,103 @@ import re
 from code_executor import CodeExecutor
 from dataframe_state import DataFrameState
 
-# Ollama configuration
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3.1:8b"
 #qwen3-coder:30b
 #llama3.1:8b
 #deepseek-r1:14b
 
-SYSTEM_INSTRUCTIONS = """You are an Excel transformer. Your task is to execute Python code to manipulate the given dataframe 'df'.
+SYSTEM_INSTRUCTIONS = """You are an Excel data transformer. Execute Python code to modify the dataframe 'df'.
 
-HOW THIS WORKS - ITERATIVE EXECUTION:
-- You are in a LOOP that continues across multiple turns
-- Write ONE code block per response
-- After you respond, your code will be executed
-- You will receive the output/result in the next turn
-- Based on that result, you decide the next step
-- Control stays with you until you use the <exit> </exit> tags
+You must respond with valid JSON in this exact format:
 
-IMPORTANT RULES:
-1. Write ONLY ONE ```python code block per response
-2. Wait to see execution results before proceeding
-3. NO print statements unless you encounter an error - then print only what's needed to debug (e.g., column dtypes, sample values)
-4. Use <exit>[Direct response to user]</exit> when ALL tasks are complete - respond naturally to what the user asked, not always with a summary
-5. ALWAYS REMEMBER THE ORIGINAL USER REQUEST - Never forget what the user asked you to do. Stay focused on completing those specific tasks.
-6. COMPLETE THE TASK AND EXIT - Do not perform additional transformations unless specifically requested. Use <exit> immediately after completing the user's request.
+{
+  "tasks_completed": true/false,
+  "code": "python code to execute",
+  "message": null | "final response to user's original query"
+}
 
-CODE EXECUTION:
-- Wrap code in ```python blocks
-- Common modules (pandas as pd, numpy as np, re) are already imported
-- All changes must be made on the existing 'df' object
-- You can import additional modules as needed
+HOW IT WORKS:
+- Execute ONE transformation at a time
+- The code execution result will be fed back to you
+- When ALL tasks are complete, set tasks_completed=true and provide final message
+- message must be null until ALL tasks are completed
 
-ERROR HANDLING:
-- Execute transformations silently unless errors occur
-- If an error occurs, add targeted print statements in your next attempt to diagnose the issue
-- Example: print column dtypes, check for null values, or inspect sample data
+ENVIRONMENT:
+- Available modules: pandas (pd), numpy (np), datetime, re
+- Work directly on dataframe 'df' - do NOT import modules or create new variables
 
-WORKFLOW:
-1. Execute the requested transformation directly (no inspection needed)
-2. If error occurs, add minimal debug prints to understand the issue
-3. When the specific task is complete, wrap your final message to the user in <exit>your message</exit> tags
-4. Do NOT explore or modify data beyond what was requested
+RULES:
+1. Execute ONLY ONE transformation per code block
+2. Do NOT add print statements unless debugging errors
+3. If you encounter an error, print dtype and sample values of the problematic column
+4. STICK TO THE ORIGINAL REQUEST - Do not add extra transformations
+5. message must be null until ALL tasks from the original request are completed
+6. After successful code execution, respond with tasks_completed=true, code=null, and final message
 
 EXAMPLES:
 
-EXAMPLE 1:
 User: "Remove the ID column"
+{
+  "tasks_completed": false,
+  "code": "df = df.drop(columns=['ID'])",
+  "message": null
+}
+[You get: "Code executed successfully. Output: None"]
+{
+  "tasks_completed": true,
+  "code": null,
+  "message": "Done! Removed the ID column."
+}
 
-Turn 1: "Removing the ID column."
-```python
-df = df.drop(columns=['ID'])
-```
-<exit>Done! Removed the ID column.</exit>
+User: "Remove A column and rename B to C"
+Turn 1:
+{
+  "tasks_completed": false,
+  "code": "df = df.drop(columns=['A'])",
+  "message": null
+}
+[You get: "Code executed successfully. Output: None"]
+Turn 2:
+{
+  "tasks_completed": false,
+  "code": "df = df.rename(columns={'B': 'C'})",
+  "message": null
+}
+[You get: "Code executed successfully. Output: None"]
+Turn 3:
+{
+  "tasks_completed": true,
+  "code": null,
+  "message": "Done! Removed A column and renamed B to C."
+}
 
-EXAMPLE 2:
-User: "Remove record_id column, rename Legal Entity to Legal and make Entity ID lowercase"
+User: "Make name column lowercase"  
+{
+  "tasks_completed": false,
+  "code": "df['name'] = df['name'].str.lower()",
+  "message": null
+}
+[You get error about float not having str attribute]
+{
+  "tasks_completed": false,
+  "code": "print(f'Column dtype: {df[\"name\"].dtype}'); print(f'Sample values: {df[\"name\"].head()}')",
+  "message": null
+}
+[You get debug info showing it's float]
+{
+  "tasks_completed": false,
+  "code": "df['name'] = df['name'].astype(str).str.lower()",
+  "message": null
+}
+[You get: "Code executed successfully. Output: None"]
+{
+  "tasks_completed": true,
+  "code": null,
+  "message": "Done! Made name column lowercase."
+}
 
-Turn 1: "Removing the record_id column."
-```python
-df = df.drop(columns=['record_id'])
-```
-
-Turn 2: "Renaming Legal Entity to Legal."
-```python
-df = df.rename(columns={'Legal Entity': 'Legal'})
-```
-
-Turn 3: "Making Entity ID values lowercase."
-```python
-df['Entity ID'] = df['Entity ID'].str.lower()
-```
-<exit>Completed all 3 tasks - removed record_id column, renamed Legal Entity to Legal, and made Entity ID lowercase.</exit>
-
-EXAMPLE 3 (Error handling):
-User: "Convert date column to datetime"
-
-Turn 1: "Converting date column to datetime."
-```python
-df['date'] = pd.to_datetime(df['date'])
-```
-
-[Error occurs: "time data doesn't match format"]
-
-Turn 2: "Let me check the date format."
-```python
-print(f"Date column dtype: {df['date'].dtype}")
-print(f"Sample values:\n{df['date'].head()}")
-df['date'] = pd.to_datetime(df['date'], format='%d/%m/%Y')
-```
-<exit>Fixed! Converted date column to datetime.</exit>
-
-RESPOND NATURALLY - Match the user's tone and question type:
-- Direct requests → Confirmation ("Done!", "Fixed!", "Completed!")
-- Questions → Direct answers ("Yes", "No", "The column has X rows")
-- Corrections → Acknowledgment ("Fixed!", "Corrected!", "Updated!")
-- Complex tasks → Brief summary of what was accomplished
+CRITICAL: STICK TO THE ORIGINAL REQUEST ONLY! No print statements unless debugging errors. message must be null until ALL tasks are complete!
 """
 
 code_executor = CodeExecutor()
@@ -144,11 +146,11 @@ def log_final_conversation_summary(ollama_conversation: Optional[List[Dict[str, 
                     assistant_turn = sum(1 for m in ollama_conversation[:i] if m["role"] == "assistant")
                     log_file.write(f"LLM TURN {assistant_turn}:\n{content}\n\n")
                 
-                # Extract code blocks from assistant messages
+                # Extract code from JSON responses
                 if msg["role"] == "assistant":
-                    code_block = extract_code_block(content)
-                    if code_block:
-                        all_code_blocks.append(code_block)
+                    json_resp = extract_json_response(content)
+                    if json_resp and json_resp.get("code"):
+                        all_code_blocks.append(json_resp["code"])
         
         log_file.write(f"{'='*80}\n")
         log_file.write(f"CONVERSATION COMPLETED - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -169,32 +171,34 @@ def log_final_conversation_summary(ollama_conversation: Optional[List[Dict[str, 
             log_file.write(f"{'='*80}\n")
 
 
-def extract_code_block(response: str) -> Optional[str]:
 
-    start = response.find("```python")
+
+def extract_json_response(response: str) -> Optional[Dict[str, Any]]:
+    """Extract JSON response from LLM output"""
+    import json
+    
+    # Try to find JSON in the response
+    start = response.find("{")
     if start == -1:
         return None
-
-    start += len("```python")
-    end = response.find("```", start)
-    if end == -1:
+    
+    # Find the matching closing brace
+    brace_count = 0
+    end = start
+    for i, char in enumerate(response[start:], start):
+        if char == "{":
+            brace_count += 1
+        elif char == "}":
+            brace_count -= 1
+            if brace_count == 0:
+                end = i + 1
+                break
+    
+    try:
+        json_str = response[start:end]
+        return json.loads(json_str)
+    except json.JSONDecodeError:
         return None
-
-    code_block = response[start:end].strip()
-    return code_block if code_block else None
-
-
-def extract_exit_message(response: str) -> Optional[str]:
-    start = response.find("<exit>")
-    if start == -1:
-        return None
-
-    start += len("<exit>")
-    end = response.find("</exit>", start)
-    if end == -1:
-        return None
-
-    return response[start:end].strip()
 
 
 def execute_code(code: str, df_state: DataFrameState) -> tuple[bool, Optional[str]]:
@@ -232,7 +236,7 @@ def chat(message: str, conversation_history: List[Dict], df_state: DataFrameStat
             "has_code": False,
         }
 
-    max_turns = 15
+    max_turns = 5
     turn_count = 0
     current_message = message  # Track the current message to send
     
@@ -287,20 +291,36 @@ Sample Data:
         ollama_conversation.append({"role": "assistant", "content": llm_response})
         print(f"LLM Response: {llm_response}")
 
-        exit_message = extract_exit_message(llm_response)
-        if exit_message:
-            print(f"Exit detected: {exit_message}")
+        # Parse JSON response
+        json_response = extract_json_response(llm_response)
+        if not json_response:
+            conversation_history.append(
+                {
+                    "role": "assistant",
+                    "content": llm_response,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
+            current_message = "Please respond with valid JSON format as specified."
+            continue
+
+        # Check if all tasks are completed
+        if json_response.get("tasks_completed", False):
+            final_message = json_response.get("message", "Task completed")
+            print(f"All tasks completed: {final_message}")
             
             # Log final conversation summary
             log_final_conversation_summary(ollama_conversation)
             
             return {
-                "message": exit_message,
+                "message": final_message,
                 "has_code": True,
                 "raw_response": llm_response,
             }
 
-        code = extract_code_block(llm_response)
+        # Extract code from JSON
+        code = json_response.get("code")
+        
         if not code:
             conversation_history.append(
                 {
@@ -309,7 +329,7 @@ Sample Data:
                     "timestamp": datetime.now().isoformat(),
                 }
             )
-            current_message = "Please provide the code to execute the task."
+            current_message = "Please provide code in the JSON response."
             continue
 
         print(f"Executing code:\n{code}")

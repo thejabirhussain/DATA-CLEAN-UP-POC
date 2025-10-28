@@ -20,21 +20,17 @@ os.environ['GLOG_minloglevel'] = '2'
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 os.environ['ANONYMIZED_TELEMETRY'] = 'False'
 
-SYSTEM_PROMPT = """You are an AI assistant specializing in answering questions about documents.
-You will receive context information extracted from PDF documents and possibly structured table data, along with a question and any previous conversation history.
+SYSTEM_PROMPT = """You are an AI assistant that answers questions about documents.
 
-Your task is to:
-1. Read and understand the context information provided
-2. Answer the user's question in your own words based on what you learned from the context
-3. DO NOT quote or copy text directly from the context - synthesize and explain naturally
-4. Keep answers VERY SHORT and CONCISE - provide only the essential information requested
-5. Avoid redundant explanations or elaboration unless specifically asked
-6. If the context doesn't contain enough information, acknowledge the limitations briefly
-7. Cite specific pages when referencing information using the format [Page X]
-8. When referencing tables, mention the relevant data naturally without quoting
-9. If there are OCR errors in the context, try to infer the correct meaning
+Read and understand the context provided, then answer the user's question in your own words.
 
-IMPORTANT: Answer as if you've read and understood the document yourself. Be conversational, direct, and natural while staying accurate."""
+Guidelines:
+- Be VERY SHORT and CONCISE
+- Provide only essential information
+- Speak naturally and conversationally
+- Synthesize information rather than quoting text
+
+Keep your answer brief and to the point."""
 
 USER_MESSAGE_TEMPLATE = """CONTEXT INFORMATION:
 {context}
@@ -44,12 +40,9 @@ USER_MESSAGE_TEMPLATE = """CONTEXT INFORMATION:
 CURRENT QUESTION:
 {query_text}
 
-Read the context information above and answer the user's question naturally in your own words.
-Do NOT quote or copy text from the context - explain what yothout unnecessary elaboration.
-Format your answer with clear citations to page numbers in [Page X] d from it.
-Be CONCISE and DIRECT - provide only the essential answer without unnecessary elaboration.
-Include page citations in [Page X] format where relevant.
-If this appears to be a follow-up to a previous question, take that previous conversation into account."""
+Answer the user's question based on the context above.
+Provide a direct, concise answer in your own words.
+Keep it brief and natural."""
 
 class PDFScreenshotProcessor:
     def __init__(self, dpi: int = 300):
@@ -157,17 +150,32 @@ class ChunkStrategy:
 class VectorDatabaseManager:
     def __init__(self, collection_name: str = "pdf_screenshots"):
         self.persist_directory = f"chroma_db_{collection_name}"
-        if os.path.exists(self.persist_directory):
-            shutil.rmtree(self.persist_directory)
+        self.collection_name = collection_name
         
         self.client = chromadb.PersistentClient(path=self.persist_directory)
         self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name="all-MiniLM-L6-v2"
         )
-        self.collection = self.client.create_collection(
-            name=collection_name,
-            embedding_function=self.embedding_function
-        )
+        
+        # Try to get existing collection, create if doesn't exist
+        try:
+            self.collection = self.client.get_collection(
+                name=collection_name,
+                embedding_function=self.embedding_function
+            )
+        except:
+            self.collection = self.client.create_collection(
+                name=collection_name,
+                embedding_function=self.embedding_function
+            )
+    
+    def collection_exists(self) -> bool:
+        """Check if collection has any documents"""
+        try:
+            count = self.collection.count()
+            return count > 0
+        except:
+            return False
 
     def add_chunks(self, chunks: List[Dict[str, Any]]) -> None:
         if not chunks:
@@ -280,10 +288,14 @@ class TableExtractor:
 
 
 class RagSystem:
-    def __init__(self, model: str = "llama3.1:8b", base_url: str = "http://localhost:11434"):
+    def __init__(self, model: str = "llama3.1:8b", base_url: str = "http://localhost:11434", pdf_filename: str = None):
         self.pdf_processor = PDFScreenshotProcessor()
         self.chunker = ChunkStrategy(chunk_size=1000, chunk_overlap=200)
-        self.vector_db = VectorDatabaseManager(collection_name="pdf_screenshots")
+        
+        # Use PDF filename for collection name if provided
+        collection_name = pdf_filename.replace('.pdf', '').replace(' ', '_') if pdf_filename else "pdf_screenshots"
+        self.vector_db = VectorDatabaseManager(collection_name=collection_name)
+        
         self.tables_by_page = {}
         self.pdf_path = None
         self.conversation_history = []
@@ -291,11 +303,26 @@ class RagSystem:
         self.base_url = base_url
 
     def index_pdf(self, pdf_path: str) -> None:
-        print("Embedding uploaded data...")
         if not os.path.exists(pdf_path):
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
         
         self.pdf_path = pdf_path
+        pdf_filename = os.path.basename(pdf_path)
+        
+        # Check if this PDF is already embedded
+        if self.vector_db.collection_exists():
+            print(f"Using existing embeddings for {pdf_filename}")
+            
+            # Load existing tables if available
+            tables_json_path = f"{os.path.splitext(pdf_path)[0]}_tables.json"
+            if os.path.exists(tables_json_path):
+                with open(tables_json_path, 'r') as f:
+                    self.tables_by_page = json.load(f)
+            
+            self.conversation_history = []
+            return
+        
+        print(f"Embedding {pdf_filename}...")
         pages = self.pdf_processor.process_pdf(pdf_path)
         self.tables_by_page = self.pdf_processor.extract_tables_from_pages(pages)
         
@@ -316,7 +343,7 @@ class RagSystem:
         
         self.vector_db.add_chunks(all_chunks)
         self.conversation_history = []
-        print("Data embedding complete")
+        print("Embedding complete")
 
     def query(self, query_text: str, n_results: int = 1) -> str:
         print("\n" + "="*80)
@@ -419,15 +446,13 @@ class RagSystem:
             print(answer)
             print("="*80 + "\n")
             
+            # Add source information automatically
             if self.pdf_path:
                 pdf_filename = os.path.basename(self.pdf_path)
                 answer += f"\n\nSource document: {pdf_filename}"
                 
-                page_citations = re.findall(r'\[Page (\d+)\]', answer)
-                if page_citations:
-                    answer += "\n\nRelevant pages:"
-                    for page in sorted(set(page_citations)):
-                        answer += f"\n- Page {page}"
+                if page_nums:
+                    answer += "\nRelevant pages: " + ", ".join(f"Page {p}" for p in sorted(page_nums, key=int))
             
             self.conversation_history.append({
                 "question": query_text,

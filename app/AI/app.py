@@ -361,7 +361,7 @@ async def upload_pdf(file: UploadFile = File(...)):
             f.write(contents)
         
         # Initialize RAG system and index the PDF
-        rag_system = RagSystem(model="llama3.1:8b")
+        rag_system = RagSystem(model="llama3.1:8b", pdf_filename=filename)
         rag_system.index_pdf(filepath)
         
         return {

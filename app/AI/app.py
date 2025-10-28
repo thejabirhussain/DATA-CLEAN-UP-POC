@@ -392,7 +392,9 @@ async def upload_pdf(file: UploadFile = File(...)):
             f.write(contents)
         
         # Initialize RAG system and index the PDF
-        rag_system = RagSystem(model="llama3.1:8b", pdf_filename=filename)
+        if rag_system is None:
+            rag_system = RagSystem(model="llama3.1:8b", pdf_filename=filename)
+        
         rag_system.index_pdf(filepath)
         
         return {
@@ -402,6 +404,53 @@ async def upload_pdf(file: UploadFile = File(...)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
+
+@app.post("/rag/upload-multiple")
+async def upload_multiple_pdfs(files: list[UploadFile] = File(...)):
+    global rag_system
+    
+    # Validate all files are PDFs
+    for file in files:
+        if not file.filename.endswith('.pdf'):
+            raise HTTPException(status_code=400, detail=f"File {file.filename} is not a PDF. Only PDF files are supported")
+    
+    try:
+        processed_files = []
+        failed_files = []
+        
+        # Initialize RAG system if not exists
+        if rag_system is None:
+            first_filename = secure_filename(files[0].filename)
+            rag_system = RagSystem(model="llama3.1:8b", pdf_filename=first_filename)
+        
+        # Process each file
+        for file in files:
+            try:
+                filename = secure_filename(file.filename)
+                filepath = os.path.join(PDF_UPLOAD_FOLDER, filename)
+                
+                contents = await file.read()
+                with open(filepath, 'wb') as f:
+                    f.write(contents)
+                
+                # Index the PDF
+                rag_system.index_pdf(filepath)
+                processed_files.append(filename)
+                
+            except Exception as e:
+                failed_files.append({
+                    "filename": file.filename,
+                    "error": str(e)
+                })
+        
+        return {
+            "success": len(failed_files) == 0,
+            "message": f"Processed {len(processed_files)} PDF(s) successfully",
+            "filenames": processed_files,
+            "failed_files": failed_files
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing PDFs: {str(e)}")
 
 @app.post("/rag/query")
 async def query_document(request: RagQueryRequest):
@@ -427,8 +476,8 @@ async def get_rag_status():
     global rag_system
     
     return {
-        "document_loaded": rag_system is not None,
-        "pdf_name": os.path.basename(rag_system.pdf_path) if rag_system and rag_system.pdf_path else None
+        "document_loaded": rag_system is not None and len(rag_system.pdf_names) > 0,
+        "pdf_names": rag_system.pdf_names if rag_system else []
     }
 
 @app.post("/rag/clear")

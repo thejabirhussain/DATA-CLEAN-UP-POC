@@ -3,10 +3,10 @@ import React, { useState, useEffect, useRef } from 'react'
 const API_BASE = 'http://localhost:8000'
 
 export default function DocumentQA() {
-  const [file, setFile] = useState(null)
+  const [files, setFiles] = useState([])
   const [uploading, setUploading] = useState(false)
   const [documentLoaded, setDocumentLoaded] = useState(false)
-  const [documentName, setDocumentName] = useState('')
+  const [documentNames, setDocumentNames] = useState([])
   const [messages, setMessages] = useState([])
   const [question, setQuestion] = useState('')
   const [querying, setQuerying] = useState(false)
@@ -29,30 +29,42 @@ export default function DocumentQA() {
       const resp = await fetch(`${API_BASE}/rag/status`)
       const data = await resp.json()
       setDocumentLoaded(data.document_loaded)
-      setDocumentName(data.pdf_name || '')
+      setDocumentNames(data.pdf_names || [])
     } catch (e) {
       console.error('Failed to check status:', e)
     }
   }
 
   const handleFileChange = (e) => {
-    const selectedFile = e.target.files?.[0]
-    if (selectedFile && selectedFile.type === 'application/pdf') {
-      setFile(selectedFile)
-    } else {
-      alert('Please select a PDF file')
+    const selectedFiles = Array.from(e.target.files || [])
+    const pdfFiles = selectedFiles.filter(file => file.type === 'application/pdf')
+    
+    if (pdfFiles.length !== selectedFiles.length) {
+      alert('Please select only PDF files')
+      return
     }
+    
+    if (pdfFiles.length === 0) {
+      alert('Please select at least one PDF file')
+      return
+    }
+    
+    setFiles(pdfFiles)
   }
 
   const handleUpload = async () => {
-    if (!file) return
+    if (files.length === 0) return
 
     setUploading(true)
     const formData = new FormData()
-    formData.append('file', file)
+    
+    // Append all selected files
+    files.forEach(file => {
+      formData.append('files', file)
+    })
 
     try {
-      const resp = await fetch(`${API_BASE}/rag/upload`, {
+      const resp = await fetch(`${API_BASE}/rag/upload-multiple`, {
         method: 'POST',
         body: formData
       })
@@ -60,9 +72,9 @@ export default function DocumentQA() {
       
       if (data.success) {
         setDocumentLoaded(true)
-        setDocumentName(data.filename)
+        setDocumentNames(data.filenames || [])
         setMessages([])
-        alert('Document uploaded and processed successfully!')
+        alert(`${files.length} document(s) uploaded and processed successfully!`)
       } else {
         alert('Upload failed: ' + (data.detail || 'Unknown error'))
       }
@@ -121,27 +133,40 @@ export default function DocumentQA() {
         {documentLoaded ? (
           <div>
             <p className="mb-2 text-sm">
-              <span className="font-semibold">Current Document:</span> {documentName}
+              <span className="font-semibold">Loaded Documents ({documentNames.length}):</span>
             </p>
-            <p className="text-xs text-slate-600">Chat is enabled. Ask questions about the document below.</p>
+            <div className="mb-2 max-h-20 overflow-y-auto">
+              {documentNames.map((name, idx) => (
+                <div key={idx} className="text-xs text-slate-600 py-0.5">• {name}</div>
+              ))}
+            </div>
+            <p className="text-xs text-slate-600">Chat is enabled. Ask questions about the documents below.</p>
           </div>
         ) : (
           <div className="space-y-3">
             <input
               type="file"
               accept=".pdf"
+              multiple
               onChange={handleFileChange}
               className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
             />
-            {file && (
-              <p className="text-sm text-slate-600">Selected: {file.name}</p>
+            {files.length > 0 && (
+              <div className="text-sm text-slate-600">
+                <p className="font-medium">Selected {files.length} file(s):</p>
+                <div className="max-h-20 overflow-y-auto mt-1">
+                  {files.map((file, idx) => (
+                    <div key={idx} className="text-xs py-0.5">• {file.name}</div>
+                  ))}
+                </div>
+              </div>
             )}
             <button
               onClick={handleUpload}
-              disabled={!file || uploading}
+              disabled={files.length === 0 || uploading}
               className="px-4 py-2 rounded-xl text-white text-sm font-medium bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {uploading ? 'Processing…' : 'Upload PDF'}
+              {uploading ? 'Processing…' : `Upload ${files.length > 0 ? files.length : ''} PDF${files.length !== 1 ? 's' : ''}`}
             </button>
           </div>
         )}
@@ -165,7 +190,7 @@ export default function DocumentQA() {
         <div className="border border-slate-200 rounded-xl p-3 min-h-[300px] max-h-[500px] overflow-y-auto mb-3 bg-slate-50 flex flex-col">
           {messages.length === 0 ? (
             <p className="text-sm text-slate-500">
-              {documentLoaded ? 'Ask a question about the document…' : 'Upload a document to start chatting'}
+              {documentLoaded ? 'Ask a question about the documents…' : 'Upload documents to start chatting'}
             </p>
           ) : (
             messages.map((msg, idx) => (
@@ -191,7 +216,7 @@ export default function DocumentQA() {
             onChange={(e) => setQuestion(e.target.value)}
             onKeyPress={handleKeyPress}
             disabled={!documentLoaded || querying}
-            placeholder={documentLoaded ? 'Type your question…' : 'Upload a document first'}
+            placeholder={documentLoaded ? 'Type your question…' : 'Upload documents first'}
             className="flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm disabled:bg-slate-100"
           />
           <button

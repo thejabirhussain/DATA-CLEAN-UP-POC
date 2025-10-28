@@ -291,12 +291,13 @@ class RagSystem:
         self.pdf_processor = PDFScreenshotProcessor()
         self.chunker = ChunkStrategy(chunk_size=1000, chunk_overlap=200)
         
-        # Use PDF filename for collection name if provided
+        # Use PDF filename for collection name if provided, otherwise use default
         collection_name = pdf_filename.replace('.pdf', '').replace(' ', '_') if pdf_filename else "pdf_screenshots"
         self.vector_db = VectorDatabaseManager(collection_name=collection_name)
         
         self.tables_by_page = {}
-        self.pdf_path = None
+        self.pdf_paths = []  # Track multiple PDF paths
+        self.pdf_names = []  # Track PDF filenames
         self.conversation_history = []
         self.model = model
         self.base_url = base_url
@@ -305,29 +306,26 @@ class RagSystem:
         if not os.path.exists(pdf_path):
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
         
-        self.pdf_path = pdf_path
         pdf_filename = os.path.basename(pdf_path)
         
-        # Check if this PDF is already embedded
-        if self.vector_db.collection_exists():
-            print(f"Using existing embeddings for {pdf_filename}")
-            
-            # Load existing tables if available
-            tables_json_path = f"{os.path.splitext(pdf_path)[0]}_tables.json"
-            if os.path.exists(tables_json_path):
-                with open(tables_json_path, 'r') as f:
-                    self.tables_by_page = json.load(f)
-            
-            self.conversation_history = []
+        # Check if this specific PDF is already indexed
+        if pdf_path in self.pdf_paths:
+            print(f"PDF {pdf_filename} is already indexed")
             return
         
         print(f"Embedding {pdf_filename}...")
         pages = self.pdf_processor.process_pdf(pdf_path)
-        self.tables_by_page = self.pdf_processor.extract_tables_from_pages(pages)
         
+        # Store tables with PDF-specific keys to avoid conflicts
+        pdf_tables = self.pdf_processor.extract_tables_from_pages(pages)
+        for page_num, tables in pdf_tables.items():
+            key = f"{pdf_filename}_page_{page_num}"
+            self.tables_by_page[key] = tables
+        
+        # Save tables for this PDF
         tables_json_path = f"{os.path.splitext(pdf_path)[0]}_tables.json"
         with open(tables_json_path, 'w') as f:
-            json.dump(self.tables_by_page, f, indent=2)
+            json.dump(pdf_tables, f, indent=2)
         
         all_chunks = []
         for page in pages:
@@ -335,14 +333,19 @@ class RagSystem:
                 "pdf_name": page["pdf_name"],
                 "page_num": page["page_num"],
                 "page_id": page["page_id"],
-                "has_tables": str(page["page_num"]) in self.tables_by_page
+                "has_tables": str(page["page_num"]) in pdf_tables,
+                "pdf_path": pdf_path
             }
             page_chunks = self.chunker.chunk_text(page["text"], metadata)
             all_chunks.extend(page_chunks)
         
         self.vector_db.add_chunks(all_chunks)
-        self.conversation_history = []
-        print("Embedding complete")
+        
+        # Track this PDF
+        self.pdf_paths.append(pdf_path)
+        self.pdf_names.append(pdf_filename)
+        
+        print(f"Embedding complete for {pdf_filename}")
 
     def query(self, query_text: str, n_results: int = 1) -> str:
         print("\n" + "="*80)
@@ -390,13 +393,18 @@ class RagSystem:
             context_part += "\n---\n"
             context_parts.append(context_part)
         
-        # Process tables
+        # Process tables - now need to check by PDF and page
         table_context = ""
-        for page_num in page_nums:
-            if page_num in self.tables_by_page:
-                tables = self.tables_by_page[page_num]
+        for i in range(len(results["ids"][0])):
+            metadata = results["metadatas"][0][i]
+            pdf_name = metadata.get('pdf_name', '')
+            page_num = str(metadata.get('page_num', ''))
+            
+            table_key = f"{pdf_name}_page_{page_num}"
+            if table_key in self.tables_by_page:
+                tables = self.tables_by_page[table_key]
                 for table in tables:
-                    table_context += f"\n--- TABLE FROM PAGE {page_num}: {table.get('title', 'Untitled Table')} ---\n"
+                    table_context += f"\n--- TABLE FROM {pdf_name}, PAGE {page_num}: {table.get('title', 'Untitled Table')} ---\n"
                     if 'headers' in table:
                         table_context += " | ".join(table['headers']) + "\n"
                         table_context += "-" * (sum(len(h) for h in table['headers']) + (len(table['headers'])-1) * 3) + "\n"
@@ -446,9 +454,20 @@ class RagSystem:
             print("="*80 + "\n")
             
             # Add source information automatically
-            if self.pdf_path:
-                pdf_filename = os.path.basename(self.pdf_path)
-                answer += f"\n\nSource document: {pdf_filename}"
+            if self.pdf_names:
+                # Get unique PDF names from the retrieved results
+                source_pdfs = set()
+                for i in range(len(results["ids"][0])):
+                    metadata = results["metadatas"][0][i]
+                    pdf_name = metadata.get('pdf_name', '')
+                    if pdf_name:
+                        source_pdfs.add(pdf_name)
+                
+                if source_pdfs:
+                    if len(source_pdfs) == 1:
+                        answer += f"\n\nSource document: {list(source_pdfs)[0]}"
+                    else:
+                        answer += f"\n\nSource documents: {', '.join(sorted(source_pdfs))}"
                 
                 if page_nums:
                     answer += "\nRelevant pages: " + ", ".join(f"Page {p}" for p in sorted(page_nums, key=int))

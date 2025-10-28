@@ -126,7 +126,15 @@ async def transform_data(request: TransformRequest):
         # clear redo history when a new transform occurs
         redo_stack = []
         
-        result_df, execution_log = code_executor.execute_code(generated_code, df_state.get_dataframe())
+        result_df, execution_log, error_msg = code_executor.execute_code(generated_code, df_state.get_dataframe())
+        
+        # Check if there was an error
+        if error_msg:
+            return {
+                "success": False,
+                "error": error_msg,
+                "generated_code": generated_code
+            }
         
         df_state.update_dataframe(result_df)
         df_state.get_dataframe().to_csv('data.csv', index=False)
@@ -441,6 +449,8 @@ async def read_root():
 if __name__ == "__main__":
     import uvicorn
     import logging
+    
+    print("App Started")
     
     # Hide uvicorn logs
     logging.getLogger("uvicorn").setLevel(logging.WARNING)

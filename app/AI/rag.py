@@ -13,7 +13,6 @@ from chromadb.utils import embedding_functions
 import requests
 import warnings
 
-# Suppress warnings and library logs
 warnings.filterwarnings('ignore')
 os.environ['GRPC_VERBOSITY'] = 'ERROR'
 os.environ['GLOG_minloglevel'] = '2'

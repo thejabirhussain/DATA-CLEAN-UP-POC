@@ -226,6 +226,9 @@ async def chat_with_agent(request: ChatRequest):
             'timestamp': datetime.now().isoformat()
         })
 
+        # Capture dataframe state before chat in case chat_agent modifies it internally
+        pre_df = df_state.get_dataframe().copy() if df_state.has_dataframe() else None
+
         response = await run_in_threadpool(
             chat_agent.chat,
             request.message,
@@ -241,6 +244,7 @@ async def chat_with_agent(request: ChatRequest):
         })
 
         dataframe_updated = False
+        # Case 1: explicit execution_result in response
         if response.get('has_code') and response.get('execution_result'):
             execution_result = response['execution_result']
             if execution_result.get('success'):
@@ -254,6 +258,25 @@ async def chat_with_agent(request: ChatRequest):
                 df_state.update_dataframe(execution_result['dataframe'])
                 df_state.get_dataframe().to_csv('data.csv', index=False)
                 dataframe_updated = True
+        else:
+            # Case 2: chat_agent may have internally executed code and updated df_state
+            if pre_df is not None and df_state.has_dataframe():
+                try:
+                    post_df = df_state.get_dataframe()
+                    changed = not pre_df.equals(post_df)
+                except Exception:
+                    changed = True
+                if changed:
+                    # push pre-change to undo stack, clear redo
+                    undo_stack.append(pre_df)
+                    if len(undo_stack) > 50:
+                        undo_stack.pop(0)
+                    redo_stack = []
+                    try:
+                        df_state.get_dataframe().to_csv('data.csv', index=False)
+                    except Exception:
+                        pass
+                    dataframe_updated = True
 
         # sanitize execution_result for response
         safe_execution_result = None

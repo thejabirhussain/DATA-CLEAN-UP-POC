@@ -26,6 +26,11 @@ export default function Prep(){
     let TOTAL_ROWS = 0
     let LAST_PAGE_SIG = ''
     const pollController = { timer: null, backoff: 2000, running: false }
+    // Backend history awareness for AI-driven ops
+    let BACKEND_UNDO = 0
+    let BACKEND_REDO = 0
+    // Progress indicator state for multi-query execution
+    let progress = { active: false, label: '', total: null, completed: 0, idleTicks: 0 }
 
     // History (track displayed rows/columns snapshots for manual edits and API-driven changes)
     let HISTORY = []
@@ -41,6 +46,8 @@ export default function Prep(){
         const result = await resp.json()
         if (result.success){
           displayData(result.preview, result.result_columns, result.total_rows)
+          if (typeof result.undo_count === 'number') BACKEND_UNDO = result.undo_count
+          if (typeof result.redo_count === 'number') BACKEND_REDO = result.redo_count
           updateHistoryInfo()
         }
       } catch(e){ console.warn('Undo failed', e) }
@@ -74,10 +81,83 @@ export default function Prep(){
         const result = await resp.json()
         if (result.success){
           displayData(result.preview, result.result_columns, result.total_rows)
-          // backend redo supersedes local history
+          if (typeof result.undo_count === 'number') BACKEND_UNDO = result.undo_count
+          if (typeof result.redo_count === 'number') BACKEND_REDO = result.redo_count
           HISTORY = []; FUTURE = []; updateHistoryInfo()
         }
       } catch(e){ console.warn('Redo failed', e) }
+    }
+
+    // Progress toast element
+    let progressEl = null
+    function ensureProgressEl(){
+      if (progressEl) return progressEl
+      progressEl = document.createElement('div')
+      progressEl.id = 'progress-toast'
+      progressEl.className = 'fixed right-4 bottom-6 z-50 px-4 py-3 rounded-xl shadow-lg bg-white border border-slate-200 text-sm text-slate-700 flex items-center gap-3'
+      // Inline styles to guarantee visibility even if Tailwind purges dynamic classes
+      Object.assign(progressEl.style, {
+        position: 'fixed',
+        right: '16px',
+        bottom: '20px',
+        zIndex: 9999,
+        padding: '10px 12px',
+        borderRadius: '12px',
+        background: '#ffffff',
+        border: '1px solid #e2e8f0',
+        boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.1)',
+        color: '#0f172a',
+        display: 'none',
+        alignItems: 'center',
+        gap: '12px',
+      })
+      const spinner = document.createElement('div')
+      spinner.className = 'w-4 h-4 rounded-full border-2 border-emerald-600 border-t-transparent animate-spin'
+      Object.assign(spinner.style, {
+        width: '16px',
+        height: '16px',
+        borderRadius: '9999px',
+        border: '2px solid #059669',
+        borderTopColor: 'transparent',
+        animation: 'spin 1s linear infinite',
+      })
+      const textWrap = document.createElement('div')
+      textWrap.innerHTML = '<div class="font-medium">Processing…</div><div class="text-xs text-slate-500"></div>'
+      progressEl.appendChild(spinner)
+      progressEl.appendChild(textWrap)
+      document.body.appendChild(progressEl)
+      // Inject minimal keyframes for spinner if not present
+      const styleEl = document.createElement('style')
+      styleEl.textContent = '@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }'
+      document.head.appendChild(styleEl)
+      return progressEl
+    }
+    function showProgress(label, total=null){
+      const el = ensureProgressEl()
+      progress.active = true; progress.label = label || 'Processing…'; progress.total = total; progress.completed = 0; progress.idleTicks = 0
+      const title = el.querySelector('.font-medium')
+      const sub = el.querySelector('.text-xs')
+      if (title) title.textContent = progress.label
+      if (sub) sub.textContent = progress.total ? `0/${progress.total} operations completed` : 'Working…'
+      el.style.display = 'flex'
+    }
+    function updateProgressCompleted(){
+      if (!progress.active || !progressEl) return
+      progress.completed += 1
+      const sub = progressEl.querySelector('.text-xs')
+      if (sub){
+        if (progress.total){ sub.textContent = `${Math.min(progress.completed, progress.total)}/${progress.total} operations completed` }
+        else { sub.textContent = `${progress.completed} operations applied` }
+      }
+    }
+    function hideProgressSoon(){
+      // allow a couple of idle poll ticks before hiding
+      progress.idleTicks += 1
+      if (progress.idleTicks >= 2){ hideProgress() }
+    }
+    function hideProgress(){
+      progress.active = false; progress.label = ''; progress.total = null; progress.completed = 0; progress.idleTicks = 0
+      if (progressEl) progressEl.style.display = 'none'
     }
 
     // DOM
@@ -227,6 +307,8 @@ export default function Prep(){
       renderTable()
       console.log('📊 renderTable() completed')
       try { LAST_PAGE_SIG = JSON.stringify({ cols: COLUMNS, total: TOTAL_ROWS, page: EDITED }) } catch(e) { LAST_PAGE_SIG = '' }
+      // If progress active, this page change indicates an applied operation
+      if (progress.active){ updateProgressCompleted(); progress.idleTicks = 0 }
     }
 
     async function loadDataPage(targetPage){
@@ -236,6 +318,9 @@ export default function Prep(){
         if (resp.ok){ 
           CURRENT_PAGE = targetPage; 
           displayData(result.data, result.columns, result.total_rows)
+          if (typeof result.undo_count === 'number') BACKEND_UNDO = result.undo_count
+          if (typeof result.redo_count === 'number') BACKEND_REDO = result.redo_count
+          updateHistoryInfo()
         }
       } catch(e){ 
         console.error('❌ loadDataPage error:', e)
@@ -247,6 +332,7 @@ export default function Prep(){
       const text = (instructionEl?.value || '').trim()
       if (!text){ setTransformStatus('Please enter an instruction', 'error'); return }
       const startTime = performance.now(); transformLoading = true; if (transformBtn){ transformBtn.disabled = true; transformBtn.textContent = 'Transforming…'; transformBtn.classList.add('opacity-70') }
+      showProgress('Applying instruction…')
       try{
         const body = { instruction: text }
         if (sessionId) body.session_id = sessionId
@@ -267,6 +353,7 @@ export default function Prep(){
               })
             }
             setTransformStatus('Additional information needed. Please answer the questions below.', 'info')
+            hideProgress()
           } else {
             const endTime = performance.now()
             const executionTime = ((endTime - startTime)/1000).toFixed(2)
@@ -274,7 +361,10 @@ export default function Prep(){
             if (result.type === 'transformation'){
               msg = `Transformation completed in ${executionTime}s! Result: ${result.result_shape[0]} rows × ${result.result_shape[1]} columns`
               // backend has updated dataframe; sync view and reset local manual history
-              await loadDataPage(1); HISTORY = []; FUTURE = []; updateHistoryInfo()
+              await loadDataPage(1); HISTORY = []; FUTURE = [];
+              if (typeof result.undo_count === 'number') BACKEND_UNDO = result.undo_count
+              if (typeof result.redo_count === 'number') BACKEND_REDO = result.redo_count
+              updateHistoryInfo()
             } else {
               msg = `Processing completed in ${executionTime}s! ${result.message || 'Operation successful'}`
             }
@@ -284,9 +374,11 @@ export default function Prep(){
             sessionId = null
             if (followupSection){ followupSection.classList.add('hidden') }
             if (followupQsEl) followupQsEl.innerHTML = ''
+            hideProgress()
           }
         } else {
           setTransformStatus(`Transformation failed: ${result.error}`, 'error'); sessionId = null; if (followupSection){ followupSection.classList.add('hidden') }
+          hideProgress()
         }
       } catch(e){ setTransformStatus(`Transform error: ${e.message}`, 'error'); sessionId = null; if (followupSection){ followupSection.classList.add('hidden') } }
       finally{ transformLoading = false; if (transformBtn){ transformBtn.disabled = false; transformBtn.textContent = 'Transform Data'; transformBtn.classList.remove('opacity-70') } }
@@ -296,7 +388,7 @@ export default function Prep(){
       try{
         const resp = await fetch(`${API_BASE}/undo`, { method:'POST', headers:{ 'Content-Type':'application/json' } })
         const result = await resp.json()
-        if (result.success){ setTransformStatus('Successfully undone last transformation!', 'success'); await loadDataPage(1); HISTORY = []; FUTURE = []; updateHistoryInfo() }
+        if (result.success){ setTransformStatus('Successfully undone last transformation!', 'success'); await loadDataPage(1); HISTORY = []; FUTURE = []; if (typeof result.undo_count === 'number') BACKEND_UNDO = result.undo_count; if (typeof result.redo_count === 'number') BACKEND_REDO = result.redo_count; updateHistoryInfo() }
         else { setTransformStatus(`Undo failed: ${result.error}`, 'error') }
       } catch(e){ setTransformStatus(`Undo error: ${e.message}`, 'error') }
     }
@@ -306,6 +398,7 @@ export default function Prep(){
       const startTime = performance.now(); transformLoading = true
       // Start live polling so intermediate backend updates from follow-up are reflected immediately
       startLivePolling()
+      showProgress('Applying follow-up…')
       try{
         const answers = Array.from(followupQsEl?.querySelectorAll('textarea')||[]).map(t => t.value)
         const resp = await fetch(`${API_BASE}/follow-up`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ session_id: sessionId, responses: answers }) })
@@ -315,10 +408,13 @@ export default function Prep(){
           let msg = ''
           if (result.type === 'transformation'){
             msg = `Transformation completed in ${executionTime}s! Result: ${result.result_shape[0]} rows × ${result.result_shape[1]} columns`
-            await loadDataPage(1); HISTORY = []; FUTURE = []; updateHistoryInfo()
+            await loadDataPage(1); HISTORY = []; FUTURE = [];
+            if (typeof result.undo_count === 'number') BACKEND_UNDO = result.undo_count
+            if (typeof result.redo_count === 'number') BACKEND_REDO = result.redo_count
+            updateHistoryInfo()
           } else { msg = `Processing completed in ${executionTime}s! ${result.message || 'Operation successful'}` }
 
-          setTransformStatus(msg, 'success'); sessionId = null; if (followupSection){ followupSection.classList.add('hidden') }; if (followupQsEl) followupQsEl.innerHTML = ''
+          setTransformStatus(msg, 'success'); sessionId = null; if (followupSection){ followupSection.classList.add('hidden') }; if (followupQsEl) followupQsEl.innerHTML = ''; hideProgress()
         } else { setTransformStatus(`Follow-up processing failed: ${result.error}`, 'error') }
       } catch(e){ setTransformStatus(`Follow-up error: ${e.message}`, 'error') }
       finally{ transformLoading = false }
@@ -340,7 +436,7 @@ export default function Prep(){
       try{
         const resp = await fetch(`${API_BASE}/upload`, { method: 'POST', body: formData })
         const result = await resp.json()
-        if (resp.ok){ displayData(result.preview, result.columns, result.total_rows); HISTORY = []; FUTURE = []; updateHistoryInfo(); startLivePolling() }
+        if (resp.ok){ displayData(result.preview, result.columns, result.total_rows); HISTORY = []; FUTURE = []; BACKEND_UNDO = result.undo_count||0; BACKEND_REDO = result.redo_count||0; updateHistoryInfo(); startLivePolling() }
       } catch(e){ console.warn('Upload failed', e) }
     }
 
@@ -352,7 +448,31 @@ export default function Prep(){
 
     // Search & paging
     searchInput.addEventListener('input', () => { const q = searchInput.value.toLowerCase(); if (!q) { EDITED = clone(ORIGINAL); renderTable(); return } EDITED = ORIGINAL.filter(r => COLUMNS.some(c => String(r[c] ?? '').toLowerCase().includes(q))); renderTable() })
-    clearEditsBtn.addEventListener('click', () => { EDITED = clone(ORIGINAL); renderTable() })
+    async function resetToOriginal(){
+      // If backend has history, walk it back; else just reset local page snapshot
+      try{
+        showProgress('Reverting to original…')
+        let safety = 100
+        while (safety-- > 0){
+          // Stop early if no backend undos available
+          if (!(BACKEND_UNDO > 0)) break
+          const resp = await fetch(`${API_BASE}/undo`, { method:'POST', headers:{ 'Content-Type':'application/json' } })
+          const result = await resp.json()
+          if (!result.success) break
+          displayData(result.preview, result.result_columns, result.total_rows)
+          if (typeof result.undo_count === 'number') BACKEND_UNDO = result.undo_count
+          if (typeof result.redo_count === 'number') BACKEND_REDO = result.redo_count
+          updateHistoryInfo()
+          if (BACKEND_UNDO <= 0) break
+        }
+      } catch(e){
+        // fallback: local reset only
+        EDITED = clone(ORIGINAL); renderTable()
+      } finally {
+        hideProgress()
+      }
+    }
+    clearEditsBtn.addEventListener('click', resetToOriginal)
     prevBtn.addEventListener('click', async () => { if (CURRENT_PAGE > 1) await loadDataPage(CURRENT_PAGE - 1) })
     nextBtn.addEventListener('click', async () => { const totalPages = Math.max(1, Math.ceil(TOTAL_ROWS / PAGE_SIZE)); if (CURRENT_PAGE < totalPages) await loadDataPage(CURRENT_PAGE + 1) })
     pageInput.addEventListener('change', async () => { const totalPages = Math.max(1, Math.ceil(TOTAL_ROWS / PAGE_SIZE)); const p = Math.max(1, Math.min(totalPages, parseInt(pageInput.value||'1',10))); await loadDataPage(p) })
@@ -379,13 +499,20 @@ export default function Prep(){
     if (redoBtn) redoBtn.addEventListener('click', async () => { if (canRedo()) { redo() } else { await apiRedo() } })
     window.addEventListener('keydown', (e) => {
       const z = (e.key === 'z' || e.key === 'Z')
-      if ((e.metaKey || e.ctrlKey) && z && !e.shiftKey) { e.preventDefault(); undo() }
+      if ((e.metaKey || e.ctrlKey) && z && !e.shiftKey) { e.preventDefault(); if (canUndo()) { undo() } else { apiUndo() } }
       if ((e.metaKey || e.ctrlKey) && z && e.shiftKey) { e.preventDefault(); if (canRedo()) { redo() } else { apiRedo() } }
     })
 
     function updateHistoryUI(){
       const undoAvail = canUndo()
       const redoAvail = canRedo()
+      const backendUndoAvail = BACKEND_UNDO > 0
+      const backendRedoAvail = BACKEND_REDO > 0
+      const totalUndoCount = (HISTORY.length || 0) + (BACKEND_UNDO || 0)
+      const totalRedoCount = (FUTURE.length || 0) + (BACKEND_REDO || 0)
+      const anyUndo = totalUndoCount > 0
+      const anyRedo = totalRedoCount > 0
+      try { console.debug('[history] local', HISTORY.length, FUTURE.length, 'backend', BACKEND_UNDO, BACKEND_REDO, 'enabled', anyUndo, anyRedo) } catch(_){}
       const setBtnState = (btn, enabled, title) => {
         if (!btn) return
         btn.disabled = !enabled
@@ -396,15 +523,17 @@ export default function Prep(){
         btn.classList.toggle('text-emerald-800', enabled)
         btn.setAttribute('title', title)
         const badge = btn.querySelector('.badge')
-        if (badge) badge.textContent = enabled ? (title.match(/\((\d+)\)/)?.[1] || '') : ''
+        if (badge){ badge.textContent = enabled ? (title.match(/\((\d+)\)/)?.[1] || '') : '' }
       }
-      const undoTitle = `Undo (Ctrl+Z)${undoAvail ? ` — (${HISTORY.length})` : ''}`
-      const redoTitle = `Redo (Ctrl+Y or Ctrl+Shift+Z)${redoAvail ? ` — (${FUTURE.length})` : ''}`
-      setBtnState(undoBtn, undoAvail, undoTitle)
-      setBtnState(redoBtn, redoAvail, redoTitle)
-      if (historyInfo) historyInfo.textContent = `undo:${HISTORY.length} redo:${FUTURE.length}`
+      const undoTitle = `Undo (Ctrl+Z) — (${totalUndoCount})`
+      const redoTitle = `Redo (Ctrl+Y or Ctrl+Shift+Z) — (${totalRedoCount})`
+      setBtnState(undoBtn, anyUndo, undoTitle)
+      setBtnState(redoBtn, anyRedo, redoTitle)
+      if (historyInfo) historyInfo.textContent = `Undo: ${totalUndoCount} • Redo: ${totalRedoCount}`
     }
     updateHistoryInfo = updateHistoryUI
+    // initialize UI state
+    updateHistoryInfo()
 
     // Chat send
     function addChatMessage(role, text){ MESSAGES.push({ role, text }); renderChat() }
@@ -416,6 +545,7 @@ export default function Prep(){
       if (chatSend){ chatSend.disabled = true; chatSend.textContent = 'Sending…'; chatSend.classList.add('opacity-70') }
       // Start live polling so intermediate backend updates are reflected immediately
       startLivePolling()
+      showProgress('Executing chat requests…')
       
       try{
         // Send message via HTTP
@@ -423,11 +553,16 @@ export default function Prep(){
         const result = await resp.json()
         if (result.success){
           addChatMessage('assistant', result.message)
-          if (result.dataframe_updated){ pushHistory(); await loadDataPage(1) }
+          if (typeof result.undo_count === 'number') BACKEND_UNDO = result.undo_count
+          if (typeof result.redo_count === 'number') BACKEND_REDO = result.redo_count
+          if (result.dataframe_updated){ await loadDataPage(1); }
+          updateHistoryInfo()
+          // Keep progress visible; polling will hide after operations settle
         } else { addChatMessage('assistant', `Sorry, I encountered an error: ${result.error}`) }
       } catch(e){ 
         addChatMessage('assistant', `Sorry, I'm having connection issues: ${e.message}`)
         console.error('Chat error:', e)
+        hideProgress()
       }
       finally{ if (chatSend){ chatSend.disabled = false; chatSend.textContent = prevLabel || 'Send'; chatSend.classList.remove('opacity-70') } }
     }
@@ -508,7 +643,7 @@ export default function Prep(){
     if (exportParquetBtn) exportParquetBtn.addEventListener('click', async () => { try { await ensureParquetInit(); const table = rowsToArrowTable(EDITED, COLUMNS); const wasmTable = ParquetTable.fromIPCStream(arrow.tableToIPC(table, 'stream')); const writerProps = new WriterPropertiesBuilder().setCompression(Compression.ZSTD).build(); const pq = writeParquet(wasmTable, writerProps); const blob = new Blob([pq], { type: 'application/octet-stream' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'cleaned.parquet'; document.body.appendChild(a); a.click(); setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url) },0) } catch (e){ console.error(e); alert('Failed to export Parquet: ' + e.message) } })
     saveRecipeBtn.addEventListener('click', () => { const recipe = JSON.stringify({ pipeline: PIPELINE, columns: COLUMNS }, null, 2); downloadString(recipe,'application/json','recipe.json') })
     loadRecipeBtn.addEventListener('click', () => recipeInput.click())
-    recipeInput.addEventListener('change', async (e) => { const f = e.target.files?.[0]; if (!f) return; const txt = await f.text(); const data = JSON.parse(txt); if (Array.isArray(data.columns)) { COLUMNS = data.columns } HISTORY = []; FUTURE = []; updateHistoryInfo(); renderTable() })
+    recipeInput.addEventListener('change', async (e) => { const f = e.target.files?.[0]; if (!f) return; const txt = await f.text(); const data = JSON.parse(txt); if (Array.isArray(data.columns)) { COLUMNS = data.columns } HISTORY = []; FUTURE = []; BACKEND_UNDO = 0; BACKEND_REDO = 0; updateHistoryInfo(); renderTable() })
 
     // No params to render for removed transform UI
 
@@ -527,6 +662,14 @@ export default function Prep(){
           if (changed){
             CURRENT_PAGE = result.current_page || CURRENT_PAGE
             displayData(result.data, result.columns, result.total_rows)
+          }
+          // Always sync undo/redo counts from backend on every poll
+          if (typeof result.undo_count === 'number') BACKEND_UNDO = result.undo_count
+          if (typeof result.redo_count === 'number') BACKEND_REDO = result.redo_count
+          updateHistoryInfo()
+          if (!changed && progress.active){
+            // No change this tick while progress active; count idleness
+            hideProgressSoon()
           }
           pollController.backoff = 2000
         } else {

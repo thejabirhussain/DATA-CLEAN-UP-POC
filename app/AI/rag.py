@@ -291,8 +291,8 @@ class RagSystem:
         self.pdf_processor = PDFScreenshotProcessor()
         self.chunker = ChunkStrategy(chunk_size=1000, chunk_overlap=200)
         
-        # Use PDF filename for collection name if provided, otherwise use default
-        collection_name = pdf_filename.replace('.pdf', '').replace(' ', '_') if pdf_filename else "pdf_screenshots"
+        # Use a shared collection name for multiple PDFs
+        collection_name = "multi_pdf_collection"
         self.vector_db = VectorDatabaseManager(collection_name=collection_name)
         
         self.tables_by_page = {}

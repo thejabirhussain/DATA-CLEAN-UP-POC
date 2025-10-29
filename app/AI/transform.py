@@ -7,10 +7,10 @@ class CoderAgent:
         self.ollama_url = "http://localhost:11434/api/generate"
         self.model = "llama3.1:8b"
     
-    async def process_instruction(self, instruction: str, df: pd.DataFrame, model_type: str = "ollama") -> str:
-        return await self.generate_code(instruction, df, model_type)
+    def process_instruction(self, instruction: str, df: pd.DataFrame, model_type: str = "ollama") -> str:
+        return self.generate_code(instruction, df, model_type)
     
-    async def generate_code(self, instruction: str, df: pd.DataFrame, model_type: str = "ollama") -> str:
+    def generate_code(self, instruction: str, df: pd.DataFrame, model_type: str = "ollama") -> str:
         print(f"USER: {instruction}")
         df_info = self._get_dataframe_info(df)
         

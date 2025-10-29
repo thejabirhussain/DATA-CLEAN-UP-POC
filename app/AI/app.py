@@ -2,17 +2,13 @@ import io
 import os
 import pandas as pd
 import pytesseract
-from pydantic import BaseModel
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
 from transform import CoderAgent
 from code_executor import CodeExecutor
 import chat_agent
 from rag import RagSystem
 from dataframe_state import DataFrameState
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from starlette.concurrency import run_in_threadpool
 
 from typing import Optional
 from datetime import datetime
@@ -20,17 +16,8 @@ from werkzeug.utils import secure_filename
 
 pytesseract.pytesseract.tesseract_cmd = r"C:\dev\tesseract\tesseract.exe"
 
-app = FastAPI(title="Excel AI", version="1.0.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 
 # Configure upload settings for RAG
 PDF_UPLOAD_FOLDER = 'uploads/pdfs'
@@ -55,28 +42,24 @@ def safe_to_dict(df: pd.DataFrame, orient='records'):
     df_clean = df_clean.where(pd.notnull(df_clean), None)
     return df_clean.to_dict(orient)
 
-class TransformRequest(BaseModel):
-    instruction: str
-    model: Optional[str] = None
+# Remove Pydantic models - Flask uses request.json directly
 
-class CodeExecutionRequest(BaseModel):
-    code: str
-
-class ChatRequest(BaseModel):
-    message: str
-
-class RagQueryRequest(BaseModel):
-    question: str
-
-@app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+@app.route("/upload", methods=["POST"])
+def upload_file():
     global undo_stack, redo_stack
     
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+    
     if not file.filename.endswith(('.xlsx', '.xls', '.csv')):
-        raise HTTPException(status_code=400, detail="Only Excel and CSV files are supported")
+        return jsonify({"error": "Only Excel and CSV files are supported"}), 400
     
     try:
-        contents = await file.read()
+        contents = file.read()
         
         if file.filename.endswith('.csv'):
             uploaded_df = pd.read_csv(io.StringIO(contents.decode('utf-8')))
@@ -93,7 +76,7 @@ async def upload_file(file: UploadFile = File(...)):
         # Save uploaded data to data.csv immediately
         df_state.get_dataframe().to_csv('data.csv', index=False)
         
-        return {
+        return jsonify({
             "message": "File uploaded successfully",
             "filename": file.filename,
             "shape": df_state.get_dataframe().shape,
@@ -102,17 +85,21 @@ async def upload_file(file: UploadFile = File(...)):
             "total_rows": len(df_state.get_dataframe()),
             "undo_count": len(undo_stack),
             "redo_count": len(redo_stack),
-        }
+        })
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error processing file: {str(e)}")
+        return jsonify({"error": f"Error processing file: {str(e)}"}), 400
 
-@app.post("/transform")
-async def transform_data(request: TransformRequest):
+@app.route("/transform", methods=["POST"])
+def transform_data():
     global undo_stack, redo_stack
     
+    data = request.get_json()
+    if not data or 'instruction' not in data:
+        return jsonify({"error": "No instruction provided"}), 400
+    
     try:
-        generated_code = await coder_agent.process_instruction(
-            request.instruction, 
+        generated_code = coder_agent.process_instruction(
+            data['instruction'], 
             df_state.get_dataframe(),
             "ollama"
         )
@@ -130,16 +117,16 @@ async def transform_data(request: TransformRequest):
         
         # Check if there was an error
         if error_msg:
-            return {
+            return jsonify({
                 "success": False,
                 "error": error_msg,
                 "generated_code": generated_code
-            }
+            })
         
         df_state.update_dataframe(result_df)
         df_state.get_dataframe().to_csv('data.csv', index=False)
         
-        return {
+        return jsonify({
             "success": True,
             "type": "transformation",
             "generated_code": generated_code,
@@ -150,24 +137,23 @@ async def transform_data(request: TransformRequest):
             "total_rows": len(df_state.get_dataframe()),
             "undo_count": len(undo_stack),
             "redo_count": len(redo_stack),
-        }
+        })
     except Exception as e:
-
-        return {
+        return jsonify({
             "error": str(e),
             "generated_code": generated_code if 'generated_code' in locals() else None
-        }
+        })
 
-@app.post("/undo")
-async def undo_last_transformation():
+@app.route("/undo", methods=["POST"])
+def undo_last_transformation():
     global undo_stack, redo_stack
     if not undo_stack:
-        return {
+        return jsonify({
             "success": False,
             "error": "Nothing to undo",
             "undo_count": len(undo_stack),
             "redo_count": len(redo_stack),
-        }
+        })
 
     print("Undo requested - restoring previous dataframe from stack")
     # move current to redo, pop last undo into current
@@ -177,7 +163,7 @@ async def undo_last_transformation():
 
     df_state.get_dataframe().to_csv('data.csv', index=False)
 
-    return {
+    return jsonify({
         "success": True,
         "type": "transformation",
         "message": "Successfully undone last transformation",
@@ -187,18 +173,18 @@ async def undo_last_transformation():
         "total_rows": len(df_state.get_dataframe()),
         "undo_count": len(undo_stack),
         "redo_count": len(redo_stack),
-    }
+    })
 
-@app.post("/redo")
-async def redo_last_undo():
+@app.route("/redo", methods=["POST"])
+def redo_last_undo():
     global undo_stack, redo_stack
     if not redo_stack:
-        return {
+        return jsonify({
             "success": False,
             "error": "Nothing to redo",
             "undo_count": len(undo_stack),
             "redo_count": len(redo_stack),
-        }
+        })
 
     print("Redo requested - re-applying last undone dataframe from stack")
     # move current to undo, pop last redo into current
@@ -210,7 +196,7 @@ async def redo_last_undo():
 
     df_state.get_dataframe().to_csv('data.csv', index=False)
 
-    return {
+    return jsonify({
         "success": True,
         "type": "transformation",
         "message": "Successfully redone last undo",
@@ -220,26 +206,30 @@ async def redo_last_undo():
         "total_rows": len(df_state.get_dataframe()),
         "undo_count": len(undo_stack),
         "redo_count": len(redo_stack),
-    }
+    })
 
 
-@app.post("/chat")
-async def chat_with_agent(request: ChatRequest):
+@app.route("/chat", methods=["POST"])
+def chat_with_agent():
     global conversation_history, undo_stack, redo_stack
+    
+    data = request.get_json()
+    if not data or 'message' not in data:
+        return jsonify({"error": "No message provided"}), 400
+    
     try:
         # record user message
         conversation_history.append({
             'role': 'user',
-            'content': request.message,
+            'content': data['message'],
             'timestamp': datetime.now().isoformat()
         })
 
         # Capture dataframe state before chat in case chat_agent modifies it internally
         pre_df = df_state.get_dataframe().copy() if df_state.has_dataframe() else None
 
-        response = await run_in_threadpool(
-            chat_agent.chat,
-            request.message,
+        response = chat_agent.chat(
+            data['message'],
             conversation_history,
             df_state
         )
@@ -323,18 +313,22 @@ async def chat_with_agent(request: ChatRequest):
                 'updated_total_rows': len(df_state.get_dataframe()),
             })
         
-        return chat_response
+        return jsonify(chat_response)
     except Exception as e:
-        return {
+        return jsonify({
             'success': False,
             'error': str(e)
-        }
+        })
 
-@app.get("/data")
-async def get_data_page(page: int = 1, rows_per_page: int = 10):
+@app.route("/data", methods=["GET"])
+def get_data_page():
     global undo_stack, redo_stack
+    
+    page = int(request.args.get('page', 1))
+    rows_per_page = int(request.args.get('rows_per_page', 10))
+    
     if not df_state.has_dataframe():
-        raise HTTPException(status_code=400, detail="No data available")
+        return jsonify({"error": "No data available"}), 400
 
     current_df = df_state.get_dataframe()
     total_rows = len(current_df)
@@ -342,13 +336,13 @@ async def get_data_page(page: int = 1, rows_per_page: int = 10):
     if total_pages == 0:
         total_pages = 1
     if page < 1 or page > total_pages:
-        raise HTTPException(status_code=400, detail=f"Invalid page number. Must be between 1 and {total_pages}")
+        return jsonify({"error": f"Invalid page number. Must be between 1 and {total_pages}"}), 400
 
     start_idx = (page - 1) * rows_per_page
     end_idx = min(start_idx + rows_per_page, total_rows)
     page_data = current_df.iloc[start_idx:end_idx]
 
-    return {
+    return jsonify({
         "data": safe_to_dict(page_data),
         "columns": list(current_df.columns),
         "current_page": page,
@@ -359,60 +353,72 @@ async def get_data_page(page: int = 1, rows_per_page: int = 10):
         "end_row": end_idx,
         "undo_count": len(undo_stack),
         "redo_count": len(redo_stack),
-    }
+    })
 
-@app.get("/chat/history")
-async def get_chat_history():
+@app.route("/chat/history", methods=["GET"])
+def get_chat_history():
     global conversation_history
-    return {
+    return jsonify({
         'messages': conversation_history[-20:],
         'total_messages': len(conversation_history)
-    }
+    })
 
-@app.post("/chat/clear")
-async def clear_chat_history():
+@app.route("/chat/clear", methods=["POST"])
+def clear_chat_history():
     global conversation_history
     conversation_history = []
-    return {'success': True, 'message': 'Chat history cleared'}
+    return jsonify({'success': True, 'message': 'Chat history cleared'})
 
-@app.post("/rag/upload")
-async def upload_pdf(file: UploadFile = File(...)):
+@app.route("/rag/upload", methods=["POST"])
+def upload_pdf():
     global rag_system
     
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+    
     if not file.filename.endswith('.pdf'):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+        return jsonify({"error": "Only PDF files are supported"}), 400
     
     try:
         # Save the uploaded file
         filename = secure_filename(file.filename)
         filepath = os.path.join(PDF_UPLOAD_FOLDER, filename)
         
-        contents = await file.read()
-        with open(filepath, 'wb') as f:
-            f.write(contents)
+        file.save(filepath)
         
         # Initialize RAG system and index the PDF
         if rag_system is None:
-            rag_system = RagSystem(model="llama3.1:8b", pdf_filename=filename)
+            rag_system = RagSystem(model="llama3.1:8b")
         
         rag_system.index_pdf(filepath)
         
-        return {
+        return jsonify({
             "success": True,
             "message": "PDF uploaded and processed successfully",
             "filename": filename
-        }
+        })
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
+        return jsonify({"error": f"Error processing PDF: {str(e)}"}), 500
 
-@app.post("/rag/upload-multiple")
-async def upload_multiple_pdfs(files: list[UploadFile] = File(...)):
+@app.route("/rag/upload-multiple", methods=["POST"])
+def upload_multiple_pdfs():
     global rag_system
+    
+    if 'files' not in request.files:
+        return jsonify({"error": "No files provided"}), 400
+    
+    files = request.files.getlist('files')
+    if not files or all(f.filename == '' for f in files):
+        return jsonify({"error": "No files selected"}), 400
     
     # Validate all files are PDFs
     for file in files:
         if not file.filename.endswith('.pdf'):
-            raise HTTPException(status_code=400, detail=f"File {file.filename} is not a PDF. Only PDF files are supported")
+            return jsonify({"error": f"File {file.filename} is not a PDF. Only PDF files are supported"}), 400
     
     try:
         processed_files = []
@@ -420,8 +426,7 @@ async def upload_multiple_pdfs(files: list[UploadFile] = File(...)):
         
         # Initialize RAG system if not exists
         if rag_system is None:
-            first_filename = secure_filename(files[0].filename)
-            rag_system = RagSystem(model="llama3.1:8b", pdf_filename=first_filename)
+            rag_system = RagSystem(model="llama3.1:8b")
         
         # Process each file
         for file in files:
@@ -429,9 +434,7 @@ async def upload_multiple_pdfs(files: list[UploadFile] = File(...)):
                 filename = secure_filename(file.filename)
                 filepath = os.path.join(PDF_UPLOAD_FOLDER, filename)
                 
-                contents = await file.read()
-                with open(filepath, 'wb') as f:
-                    f.write(contents)
+                file.save(filepath)
                 
                 # Index the PDF
                 rag_system.index_pdf(filepath)
@@ -443,66 +446,61 @@ async def upload_multiple_pdfs(files: list[UploadFile] = File(...)):
                     "error": str(e)
                 })
         
-        return {
+        return jsonify({
             "success": len(failed_files) == 0,
             "message": f"Processed {len(processed_files)} PDF(s) successfully",
             "filenames": processed_files,
             "failed_files": failed_files
-        }
+        })
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing PDFs: {str(e)}")
+        return jsonify({"error": f"Error processing PDFs: {str(e)}"}), 500
 
-@app.post("/rag/query")
-async def query_document(request: RagQueryRequest):
+@app.route("/rag/query", methods=["POST"])
+def query_document():
     global rag_system
+    
+    data = request.get_json()
+    if not data or 'question' not in data:
+        return jsonify({"error": "No question provided"}), 400
     
     if rag_system is None:
-        raise HTTPException(status_code=400, detail="No PDF has been uploaded yet. Please upload a PDF first.")
-    
-    if not request.question:
-        raise HTTPException(status_code=400, detail="No question provided")
+        return jsonify({"error": "No PDF has been uploaded yet. Please upload a PDF first."}), 400
     
     try:
-        response = rag_system.query(request.question)
-        return {
+        response = rag_system.query(data['question'])
+        return jsonify({
             "success": True,
             "answer": response
-        }
+        })
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
+        return jsonify({"error": f"Error processing query: {str(e)}"}), 500
 
-@app.get("/rag/status")
-async def get_rag_status():
+@app.route("/rag/status", methods=["GET"])
+def get_rag_status():
     global rag_system
     
-    return {
+    return jsonify({
         "document_loaded": rag_system is not None and len(rag_system.pdf_names) > 0,
         "pdf_names": rag_system.pdf_names if rag_system else []
-    }
+    })
 
-@app.post("/rag/clear")
-async def clear_rag_system():
+@app.route("/rag/clear", methods=["POST"])
+def clear_rag_system():
     global rag_system
     rag_system = None
-    return {
+    return jsonify({
         "success": True,
         "message": "RAG system cleared"
-    }
+    })
 
-@app.get("/", response_class=HTMLResponse)
-async def read_root():
-    with open("static/index-react.html", "r", encoding="utf-8") as f:
-        return HTMLResponse(content=f.read())
+@app.route("/")
+def read_root():
+    return send_from_directory("static", "index-react.html")
 
+@app.route("/static/<path:filename>")
+def serve_static(filename):
+    return send_from_directory("static", filename)
 
 if __name__ == "__main__":
-    import uvicorn
-    import logging
-    
     print("App Started")
-    
-    # Hide uvicorn logs
-    logging.getLogger("uvicorn").setLevel(logging.WARNING)
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-    
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")
+    app.run(host="0.0.0.0", port=8000, debug=False)

@@ -12,7 +12,6 @@ OLLAMA_MODEL = "llama3.1:8b"
 AVAILABLE_TOOLS = """AVAILABLE TOOLS:
 1. get_column_info() - Returns column names with dtypes
 2. get_sample_data(columns: list) - Returns sample values for specified columns
-3. get_dataframe_shape() - Returns shape and basic info about the dataframe
 
 To use a tool, include it in the tools array:
 {"tools": [{"tool": "get_column_info", "params": {}}]}
@@ -40,13 +39,6 @@ WORKFLOW:
 ENVIRONMENT:
 - Available modules: pandas (pd), numpy (np), datetime, re
 - Work directly on dataframe 'df' - do NOT import modules or create new variables
-
-RULES:
-1. Execute ONLY ONE transformation per code block
-2. Use tools when you need to understand the data structure or debug errors
-3. STICK TO THE ORIGINAL REQUEST - Do not add extra transformations
-4. message must be null until ALL tasks from the original request are completed
-5. After successful code execution, respond with tasks_completed=true, code=null, and final message
 
 EXAMPLES:
 
@@ -114,57 +106,6 @@ def format_ollama_conversation(conversation: List[Dict[str, str]]) -> str:
     return prompt
 
 
-def log_final_conversation_summary(ollama_conversation: Optional[List[Dict[str, str]]]):
-    """Write the final clean conversation summary to the file"""
-    with open("storage/conversation_log.txt", "w", encoding="utf-8") as log_file:
-        log_file.write(f"\n{'='*80}\n")
-        log_file.write(f"FINAL CONVERSATION SUMMARY\n")
-        log_file.write(f"{'='*80}\n\n")
-        
-        # Collect all executed code blocks
-        all_code_blocks = []
-        
-        if ollama_conversation:
-            for i, msg in enumerate(ollama_conversation, 1):
-                role = msg["role"].upper()
-                content = msg["content"]
-                
-                if msg["role"] == "system":
-                    log_file.write(f"SYSTEM INSTRUCTIONS:\n{content}\n\n")
-                elif msg["role"] == "user":
-                    log_file.write(f"USER:\n{content}\n\n")
-                else:  # assistant
-                    # Count only assistant turns
-                    assistant_turn = sum(1 for m in ollama_conversation[:i] if m["role"] == "assistant")
-                    log_file.write(f"LLM TURN {assistant_turn}:\n{content}\n\n")
-                
-                # Extract code from JSON responses
-                if msg["role"] == "assistant":
-                    json_resp = extract_json_response(content)
-                    if json_resp and json_resp.get("code"):
-                        all_code_blocks.append(json_resp["code"])
-        
-        log_file.write(f"{'='*80}\n")
-        log_file.write(f"CONVERSATION COMPLETED - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        log_file.write(f"{'='*80}\n")
-        
-        # Append consolidated code section
-        if all_code_blocks:
-            log_file.write(f"\n{'='*80}\n")
-            log_file.write(f"ALL EXECUTED CODE (CONSOLIDATED)\n")
-            log_file.write(f"{'='*80}\n\n")
-            log_file.write("```python\n")
-            for i, code in enumerate(all_code_blocks, 1):
-                log_file.write(f"# Step {i}\n")
-                log_file.write(f"{code}\n\n")
-            log_file.write("```\n")
-            log_file.write(f"\n{'='*80}\n")
-            log_file.write(f"TOTAL CODE BLOCKS EXECUTED: {len(all_code_blocks)}\n")
-            log_file.write(f"{'='*80}\n")
-
-
-
-
 def get_column_info(df_state: DataFrameStateService) -> str:
     if not df_state.has_dataframe():
         return "No dataframe available"
@@ -189,14 +130,6 @@ def get_sample_data(df_state: DataFrameStateService, columns: list) -> str:
             result.append(f"{col}: Column not found")
     return "Sample data:\n" + "\n".join(result)
 
-def get_dataframe_shape(df_state: DataFrameStateService) -> str:
-    if not df_state.has_dataframe():
-        return "No dataframe available"
-    
-    df = df_state.get_dataframe()
-    return f"Shape: {df.shape}, Columns: {len(df.columns)}, Rows: {len(df)}"
-
-
 def execute_tools(tools: list, df_state: DataFrameStateService) -> str:
     results = []
     for tool_call in tools:
@@ -218,15 +151,10 @@ def execute_tools(tools: list, df_state: DataFrameStateService) -> str:
     return "\n\n".join(results)
 
 def extract_json_response(response: str) -> Optional[Dict[str, Any]]:
-    """Extract JSON response from LLM output"""
     import json
-    
-    # Try to find JSON in the response
     start = response.find("{")
     if start == -1:
         return None
-    
-    # Find the matching closing brace
     brace_count = 0
     end = start
     for i, char in enumerate(response[start:], start):
@@ -261,7 +189,6 @@ def execute_code(code: str, df_state: DataFrameStateService) -> tuple[bool, Opti
 
     df_state.update_dataframe(result_df)
     
-    # Always save to data.csv after successful code execution
     try:
         df_state.get_dataframe().to_csv('storage/data.csv', index=False)
         print(f"✓ Data saved to data.csv - Shape: {df_state.get_dataframe().shape}")
@@ -285,7 +212,6 @@ def chat(message: str, conversation_history: List[Dict], df_state: DataFrameStat
     current_message = message
     
     ollama_conversation = []
-    gemini_chat = None  # Will be initialized if using Gemini
 
     while turn_count < max_turns:
         print(f"\n====================")
@@ -341,7 +267,7 @@ def chat(message: str, conversation_history: List[Dict], df_state: DataFrameStat
             final_message = json_response.get("message", "Task completed")
             print(f"All tasks completed: {final_message}")
             
-            log_final_conversation_summary(ollama_conversation)
+            _log_ollama_conversation(ollama_conversation, message, final_message)
             
             return {
                 "message": final_message,
@@ -408,153 +334,30 @@ def chat(message: str, conversation_history: List[Dict], df_state: DataFrameStat
             current_message = f"Code failed with error:\n{output}\n\nFix it and try again."
 
     print(f"Max turns ({max_turns}) reached")
-    
-    # Log final conversation summary
-    log_final_conversation_summary(ollama_conversation)
-    
-    return {
-        "message": "Task execution stopped - maximum turns reached.",
-        "has_code": False,
-        "raw_response": "Max turns reached",
-    }
 
-def chat_gemini(message: str, conversation_history: List[Dict], df_state: DataFrameStateService) -> Dict[str, Any]:
-    """Chat function using Gemini model"""
-    if not df_state.has_dataframe():
-        return {
-            "message": "No dataframe available. Please upload a file first.",
-            "has_code": False,
-        }
-
-    from .gemini_chat_service import GeminiChatService
-    
-    max_turns = 5
-    turn_count = 0
-    current_message = message
-    
-    gemini_chat = None
-    gemini_conversation = []
-
-    while turn_count < max_turns:
-        print(f"\n====================")
-
-        if turn_count == 0:
-            df_info = f"""
-        DATAFRAME INFO:
-        Columns: {df_state.get_dataframe().columns.tolist()}
-        Shape: {df_state.get_dataframe().shape}
-        Data Types: {df_state.get_dataframe().dtypes.to_dict()}
-        Sample Data:
-        {df_state.get_dataframe().head().to_string()}
-        """
-            gemini_chat = GeminiChatService()
-            system_instruction = SYSTEM_INSTRUCTIONS + f"\n{df_info}"
-            gemini_chat.set_system_instruction(system_instruction)
-            llm_response = gemini_chat.send_message(current_message)
-            
-            gemini_conversation = [
-                {"role": "system", "content": system_instruction},
-                {"role": "user", "content": current_message}
-            ]
-        else:
-            llm_response = gemini_chat.send_message(current_message)
-            gemini_conversation.append({"role": "user", "content": current_message})
-        
-        turn_count += 1
-        print(f"\n========== LLM TURN {turn_count} ==========")
-        
-        gemini_conversation.append({"role": "assistant", "content": llm_response})
-        print(f"LLM Response: {llm_response}")
-
-        json_response = extract_json_response(llm_response)
-        if not json_response:
-            conversation_history.append(
-                {
-                    "role": "assistant",
-                    "content": llm_response,
-                    "timestamp": datetime.now().isoformat(),
-                }
-            )
-            current_message = "Please respond with valid JSON format as specified."
-            continue
-
-        if json_response.get("tasks_completed", False):
-            final_message = json_response.get("message", "Task completed")
-            print(f"All tasks completed: {final_message}")
-            
-            log_final_conversation_summary(gemini_conversation)
-            
-            return {
-                "message": final_message,
-                "has_code": True,
-                "raw_response": llm_response,
-            }
-
-        tools = json_response.get("tools")
-        code = json_response.get("code")
-        
-        if tools:
-            print(f"Executing tools: {tools}")
-            tool_results = execute_tools(tools, df_state)
-            print(f"Tool results: {tool_results}")
-            conversation_history.append(
-                {
-                    "role": "assistant",
-                    "content": llm_response,
-                    "tools": tools,
-                    "tool_results": tool_results,
-                    "timestamp": datetime.now().isoformat(),
-                }
-            )
-            current_message = f"Tool results:\n{tool_results}"
-            continue
-        
-        if not code:
-            conversation_history.append(
-                {
-                    "role": "assistant",
-                    "content": llm_response,
-                    "timestamp": datetime.now().isoformat(),
-                }
-            )
-            current_message = "Please provide code or tools in the JSON response."
-            continue
-
-        print(f"Executing code:\n{code}")
-        success, output = execute_code(code, df_state)
-
-        if success:
-            print(f"Success: {output}")
-            conversation_history.append(
-                {
-                    "role": "assistant",
-                    "content": llm_response,
-                    "code": code,
-                    "output": output,
-                    "timestamp": datetime.now().isoformat(),
-                }
-            )
-            current_message = f"Code executed successfully. Output:\n{output}"
-        else:
-            print(f"Failed: {output}")
-            conversation_history.append(
-                {
-                    "role": "assistant",
-                    "content": llm_response,
-                    "code": code,
-                    "error": output,
-                    "timestamp": datetime.now().isoformat(),
-                }
-            )
-            current_message = f"Code failed with error:\n{output}\n\nFix it and try again."
-
-    print(f"Max turns ({max_turns}) reached")
-    
-    # Log final conversation summary
-    log_final_conversation_summary(gemini_conversation)
+    _log_ollama_conversation(ollama_conversation, message, "Task execution stopped - maximum turns reached.")
     
     return {
         "message": "Task execution stopped - maximum turns reached.",
         "has_code": False,
         "raw_response": "Max turns reached",
     }
+
+
+def _log_ollama_conversation(conversation, original_message, final_message):
+    with open("storage/conversation_log.txt", "w", encoding="utf-8") as log_file:
+        log_file.write(f"\n{'='*80}\n")
+        log_file.write(f"OLLAMA CONVERSATION LOG\n")
+        log_file.write(f"{'='*80}\n\n")
+        log_file.write(f"Original User Message: {original_message}\n\n")
+        
+        for i, msg in enumerate(conversation, 1):
+            role = msg["role"].upper()
+            content = msg["content"]
+            log_file.write(f"{role} (Turn {i}):\n{content}\n\n")
+        
+        log_file.write(f"{'='*80}\n")
+        log_file.write(f"FINAL MESSAGE: {final_message}\n")
+        log_file.write(f"{'='*80}\n")
+        log_file.write(f"CONVERSATION COMPLETED - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        log_file.write(f"{'='*80}\n")

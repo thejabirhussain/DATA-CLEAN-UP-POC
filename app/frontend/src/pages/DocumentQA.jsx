@@ -64,7 +64,7 @@ export default function DocumentQA() {
     })
 
     try {
-      const resp = await fetch(`${API_BASE}/rag/upload-multiple`, {
+      const resp = await fetch(`${API_BASE}/rag/upload`, {
         method: 'POST',
         body: formData
       })

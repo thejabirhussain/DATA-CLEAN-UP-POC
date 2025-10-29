@@ -1,8 +1,10 @@
 import requests
 import pandas as pd
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional, Tuple
+from .dataframe_state_service import DataFrameStateService
+from .code_executor_service import CodeExecutorService
 
-class CoderAgent:
+class TransformService:
     def __init__(self):
         self.ollama_url = "http://localhost:11434/api/generate"
         self.model = "llama3.1:8b"
@@ -102,4 +104,58 @@ Generate code for: "{instruction}"
             'dtypes': df.dtypes.astype(str).to_dict(),
             'sample_data': df.head(3).to_string()
         }
+
+
+class DataTransformationService:
+    def __init__(self):
+        self.df_state = DataFrameStateService()
+        self.coder_agent = TransformService()
+        self.code_executor = CodeExecutorService()
     
+    def upload_dataframe(self, df: pd.DataFrame, filename: str) -> dict:
+        self.df_state.set_dataframe(df)
+        self.df_state.get_dataframe().to_csv('storage/data.csv', index=False)
+        
+        return {
+            "filename": filename,
+            "shape": df.shape,
+            "columns": list(df.columns),
+            "total_rows": len(df)
+        }
+    
+    def transform_data(self, instruction: str) -> Tuple[bool, dict]:
+        if not self.df_state.has_dataframe():
+            return False, {"error": "No dataframe available"}
+        
+        generated_code = self.coder_agent.process_instruction(
+            instruction, 
+            self.df_state.get_dataframe(),
+            "ollama"
+        )
+        
+        result_df, execution_log, error_msg = self.code_executor.execute_code(
+            generated_code, 
+            self.df_state.get_dataframe()
+        )
+        
+        if error_msg:
+            return False, {
+                "error": error_msg,
+                "generated_code": generated_code
+            }
+        
+        self.df_state.update_dataframe(result_df)
+        self.df_state.get_dataframe().to_csv('storage/data.csv', index=False)
+        
+        return True, {
+            "generated_code": generated_code,
+            "execution_log": execution_log,
+            "result_shape": result_df.shape,
+            "result_columns": list(result_df.columns),
+            "total_rows": len(result_df)
+        }
+    
+    def get_state_info(self) -> dict:
+        return {
+            "has_dataframe": self.df_state.has_dataframe()
+        }

@@ -3,8 +3,8 @@ import pandas as pd
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import re
-from code_executor import CodeExecutor
-from dataframe_state import DataFrameState
+from .code_executor_service import CodeExecutorService
+from .dataframe_state_service import DataFrameStateService
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3.1:8b"
@@ -105,7 +105,7 @@ User: "Make name column lowercase"
 CRITICAL: STICK TO THE ORIGINAL REQUEST ONLY! No print statements unless debugging errors. message must be null until ALL tasks are complete!
 """
 
-code_executor = CodeExecutor()
+code_executor = CodeExecutorService()
 
 
 def format_ollama_conversation(conversation: List[Dict[str, str]]) -> str:
@@ -124,7 +124,7 @@ def format_ollama_conversation(conversation: List[Dict[str, str]]) -> str:
 
 def log_final_conversation_summary(ollama_conversation: Optional[List[Dict[str, str]]]):
     """Write the final clean conversation summary to the file"""
-    with open("conversation_log.txt", "w", encoding="utf-8") as log_file:
+    with open("storage/conversation_log.txt", "w", encoding="utf-8") as log_file:
         log_file.write(f"\n{'='*80}\n")
         log_file.write(f"FINAL CONVERSATION SUMMARY\n")
         log_file.write(f"{'='*80}\n\n")
@@ -201,7 +201,7 @@ def extract_json_response(response: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def execute_code(code: str, df_state: DataFrameState) -> tuple[bool, Optional[str]]:
+def execute_code(code: str, df_state: DataFrameStateService) -> tuple[bool, Optional[str]]:
     if not code:
         return False, "No code provided"
 
@@ -219,7 +219,7 @@ def execute_code(code: str, df_state: DataFrameState) -> tuple[bool, Optional[st
     
     # Always save to data.csv after successful code execution
     try:
-        df_state.get_dataframe().to_csv('data.csv', index=False)
+        df_state.get_dataframe().to_csv('storage/data.csv', index=False)
         print(f"✓ Data saved to data.csv - Shape: {df_state.get_dataframe().shape}")
     except Exception as e:
         print(f"⚠ Warning: Could not save to data.csv: {e}")
@@ -229,7 +229,7 @@ def execute_code(code: str, df_state: DataFrameState) -> tuple[bool, Optional[st
 
 
 
-def chat(message: str, conversation_history: List[Dict], df_state: DataFrameState) -> Dict[str, Any]:
+def chat(message: str, conversation_history: List[Dict], df_state: DataFrameStateService) -> Dict[str, Any]:
     if not df_state.has_dataframe():
         return {
             "message": "No dataframe available. Please upload a file first.",

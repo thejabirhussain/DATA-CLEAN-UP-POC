@@ -6,12 +6,13 @@ import shutil
 import textwrap
 import pytesseract
 from PIL import Image
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import fitz
 import chromadb
 from chromadb.utils import embedding_functions
 import requests
 import warnings
+from werkzeug.utils import secure_filename
 
 warnings.filterwarnings('ignore')
 os.environ['GRPC_VERBOSITY'] = 'ERROR'
@@ -148,7 +149,7 @@ class ChunkStrategy:
 
 class VectorDatabaseManager:
     def __init__(self, collection_name: str = "pdf_screenshots"):
-        self.persist_directory = f"chroma_db_{collection_name}"
+        self.persist_directory = f"storage/chroma_db_{collection_name}"
         self.collection_name = collection_name
         
         self.client = chromadb.PersistentClient(path=self.persist_directory)
@@ -156,7 +157,6 @@ class VectorDatabaseManager:
             model_name="all-MiniLM-L6-v2"
         )
         
-        # Try to get existing collection, create if doesn't exist
         try:
             self.collection = self.client.get_collection(
                 name=collection_name,
@@ -169,7 +169,6 @@ class VectorDatabaseManager:
             )
     
     def collection_exists(self) -> bool:
-        """Check if collection has any documents"""
         try:
             count = self.collection.count()
             return count > 0
@@ -291,13 +290,12 @@ class RagSystem:
         self.pdf_processor = PDFScreenshotProcessor()
         self.chunker = ChunkStrategy(chunk_size=1000, chunk_overlap=200)
         
-        # Use a shared collection name for multiple PDFs
         collection_name = "multi_pdf_collection"
         self.vector_db = VectorDatabaseManager(collection_name=collection_name)
         
         self.tables_by_page = {}
-        self.pdf_paths = []  # Track multiple PDF paths
-        self.pdf_names = []  # Track PDF filenames
+        self.pdf_paths = []
+        self.pdf_names = []
         self.conversation_history = []
         self.model = model
         self.base_url = base_url
@@ -308,7 +306,6 @@ class RagSystem:
         
         pdf_filename = os.path.basename(pdf_path)
         
-        # Check if this specific PDF is already indexed
         if pdf_path in self.pdf_paths:
             print(f"PDF {pdf_filename} is already indexed")
             return
@@ -316,13 +313,11 @@ class RagSystem:
         print(f"Embedding {pdf_filename}...")
         pages = self.pdf_processor.process_pdf(pdf_path)
         
-        # Store tables with PDF-specific keys to avoid conflicts
         pdf_tables = self.pdf_processor.extract_tables_from_pages(pages)
         for page_num, tables in pdf_tables.items():
             key = f"{pdf_filename}_page_{page_num}"
             self.tables_by_page[key] = tables
         
-        # Save tables for this PDF
         tables_json_path = f"{os.path.splitext(pdf_path)[0]}_tables.json"
         with open(tables_json_path, 'w') as f:
             json.dump(pdf_tables, f, indent=2)
@@ -341,7 +336,6 @@ class RagSystem:
         
         self.vector_db.add_chunks(all_chunks)
         
-        # Track this PDF
         self.pdf_paths.append(pdf_path)
         self.pdf_names.append(pdf_filename)
         
@@ -353,7 +347,6 @@ class RagSystem:
         print(query_text)
         print("="*80)
         
-        # Check for page-specific filters
         filters = {}
         if "page" in query_text.lower():
             match = re.search(r'page\s+(\d+)', query_text.lower())
@@ -370,7 +363,6 @@ class RagSystem:
             })
             return response
         
-        # Process retrieved chunks
         context_parts = []
         page_nums = set()
         
@@ -393,7 +385,6 @@ class RagSystem:
             context_part += "\n---\n"
             context_parts.append(context_part)
         
-        # Process tables - now need to check by PDF and page
         table_context = ""
         for i in range(len(results["ids"][0])):
             metadata = results["metadatas"][0][i]
@@ -417,7 +408,6 @@ class RagSystem:
         if table_context:
             context += "\n\nTABLE DATA:\n" + table_context
         
-        # Build conversation context
         conversation_context = ""
         if self.conversation_history:
             conversation_context = "\n\nPREVIOUS CONVERSATION:\n"
@@ -432,7 +422,6 @@ class RagSystem:
         )
         
         try:
-            # Make request to Ollama
             response = requests.post(
                 f"{self.base_url}/api/generate",
                 json={
@@ -453,9 +442,7 @@ class RagSystem:
             print(answer)
             print("="*80 + "\n")
             
-            # Add source information automatically
             if self.pdf_names:
-                # Get unique PDF names from the retrieved results
                 source_pdfs = set()
                 for i in range(len(results["ids"][0])):
                     metadata = results["metadatas"][0][i]
@@ -486,3 +473,72 @@ class RagSystem:
                 "answer": error_msg
             })
             return error_msg
+
+
+class RagService:
+    def __init__(self):
+        self.rag_system: Optional[RagSystem] = None
+        self.upload_folder = 'storage/uploads/pdfs'
+        os.makedirs(self.upload_folder, exist_ok=True)
+    
+    def upload_pdfs(self, files) -> Tuple[bool, dict]:
+        processed_files = []
+        failed_files = []
+        
+        if self.rag_system is None:
+            self.rag_system = RagSystem(model="llama3.1:8b")
+        
+        file_list = files if isinstance(files, list) else [files]
+        
+        for file in file_list:
+            try:
+                secure_name = secure_filename(file.filename)
+                filepath = os.path.join(self.upload_folder, secure_name)
+                file.save(filepath)
+                
+                self.rag_system.index_pdf(filepath)
+                processed_files.append(secure_name)
+                
+            except Exception as e:
+                failed_files.append({
+                    "filename": file.filename,
+                    "error": str(e)
+                })
+        
+        success = len(failed_files) == 0
+        file_count = len(processed_files)
+        
+        if file_count == 1:
+            message = f"Successfully processed 1 PDF: {processed_files[0]}"
+        else:
+            message = f"Successfully processed {file_count} PDFs"
+        
+        return success, {
+            "message": message,
+            "filenames": processed_files,
+            "failed_files": failed_files,
+            "total_processed": file_count
+        }
+    
+    def query_documents(self, question: str) -> Tuple[bool, dict]:
+        if self.rag_system is None:
+            return False, {"error": "No PDF has been uploaded yet. Please upload a PDF first."}
+        
+        try:
+            response = self.rag_system.query(question)
+            return True, {"answer": response}
+        except Exception as e:
+            return False, {"error": f"Error processing query: {str(e)}"}
+    
+    def get_status(self) -> dict:
+        return {
+            "document_loaded": self.rag_system is not None and len(self.rag_system.pdf_names) > 0,
+            "pdf_names": self.rag_system.pdf_names if self.rag_system else []
+        }
+    
+    def clear_system(self) -> dict:
+        self.rag_system = None
+        return {
+            "success": True,
+            "message": "RAG system cleared"
+        }

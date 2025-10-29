@@ -2,7 +2,7 @@ import pandas as pd
 from typing import Optional
 
 
-class DataFrameState:
+class DataFrameStateService:
     def __init__(self):
         self.current_df: Optional[pd.DataFrame] = None
 

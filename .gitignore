@@ -59,3 +59,4 @@ app/AI/uploads/
 chroma_db_*/
 *_tables.json
 data.csv
+conversation_log.txt

@@ -8,25 +8,34 @@ from .dataframe_state_service import DataFrameStateService
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3.1:8b"
-#qwen3-coder:30b
-#llama3.1:8b
-#deepseek-r1:14b
 
-SYSTEM_INSTRUCTIONS = """You are an Excel data transformer. Execute Python code to modify the dataframe 'df'.
+AVAILABLE_TOOLS = """AVAILABLE TOOLS:
+1. get_column_info() - Returns column names with dtypes
+2. get_sample_data(columns: list) - Returns sample values for specified columns
+3. get_dataframe_shape() - Returns shape and basic info about the dataframe
+
+To use a tool, include it in the tools array:
+{"tools": [{"tool": "get_column_info", "params": {}}]}
+"""
+
+SYSTEM_INSTRUCTIONS = f"""You are a DataFrame transformation assistant.
+
+{AVAILABLE_TOOLS}
 
 You must respond with valid JSON in this exact format:
 
-{
+{{
+  "tools": [list of tools to call] | null,
+  "code": "python code to execute" | null,
   "tasks_completed": true/false,
-  "code": "python code to execute",
-  "message": null | "final response to user's original query"
-}
+  "message": "final response to user" | null
+}}
 
-HOW IT WORKS:
-- Execute ONE transformation at a time
-- The code execution result will be fed back to you
-- When ALL tasks are complete, set tasks_completed=true and provide final message
-- message must be null until ALL tasks are completed
+WORKFLOW:
+1. Execute ONE transformation at a time on dataframe 'df' directly
+2. ONLY use tools when you encounter errors to debug the issue
+3. When ALL tasks are complete, set tasks_completed=true and provide final message
+4. Do NOT use tools proactively - only for error debugging
 
 ENVIRONMENT:
 - Available modules: pandas (pd), numpy (np), datetime, re
@@ -34,75 +43,58 @@ ENVIRONMENT:
 
 RULES:
 1. Execute ONLY ONE transformation per code block
-2. Do NOT add print statements unless debugging errors
-3. If you encounter an error, print dtype and sample values of the problematic column
-4. STICK TO THE ORIGINAL REQUEST - Do not add extra transformations
-5. message must be null until ALL tasks from the original request are completed
-6. After successful code execution, respond with tasks_completed=true, code=null, and final message
+2. Use tools when you need to understand the data structure or debug errors
+3. STICK TO THE ORIGINAL REQUEST - Do not add extra transformations
+4. message must be null until ALL tasks from the original request are completed
+5. After successful code execution, respond with tasks_completed=true, code=null, and final message
 
 EXAMPLES:
 
 User: "Remove the ID column"
-{
-  "tasks_completed": false,
+{{
+  "tools": null,
   "code": "df = df.drop(columns=['ID'])",
+  "tasks_completed": false,
   "message": null
-}
-[You get: "Code executed successfully. Output: None"]
-{
-  "tasks_completed": true,
+}}
+[You get: "Code executed successfully"]
+{{
+  "tools": null,
   "code": null,
+  "tasks_completed": true,
   "message": "Done! Removed the ID column."
-}
+}}
 
-User: "Remove A column and rename B to C"
-Turn 1:
-{
-  "tasks_completed": false,
-  "code": "df = df.drop(columns=['A'])",
-  "message": null
-}
-[You get: "Code executed successfully. Output: None"]
-Turn 2:
-{
-  "tasks_completed": false,
-  "code": "df = df.rename(columns={'B': 'C'})",
-  "message": null
-}
-[You get: "Code executed successfully. Output: None"]
-Turn 3:
-{
-  "tasks_completed": true,
-  "code": null,
-  "message": "Done! Removed A column and renamed B to C."
-}
-
-User: "Make name column lowercase"  
-{
-  "tasks_completed": false,
+User: "Make name column lowercase" (encounters error)
+{{
+  "tools": null,
   "code": "df['name'] = df['name'].str.lower()",
-  "message": null
-}
-[You get error about float not having str attribute]
-{
   "tasks_completed": false,
-  "code": "print(f'Column dtype: {df[\"name\"].dtype}'); print(f'Sample values: {df[\"name\"].head()}')",
   "message": null
-}
-[You get debug info showing it's float]
-{
-  "tasks_completed": false,
-  "code": "df['name'] = df['name'].astype(str).str.lower()",
-  "message": null
-}
-[You get: "Code executed successfully. Output: None"]
-{
-  "tasks_completed": true,
+}}
+[You get error: AttributeError: 'float' object has no attribute 'str']
+{{
+  "tools": [{{"tool": "get_sample_data", "params": {{"columns": ["name"]}}}}],
   "code": null,
+  "tasks_completed": false,
+  "message": null
+}}
+[You get sample data showing it's float values]
+{{
+  "tools": null,
+  "code": "df['name'] = df['name'].astype(str).str.lower()",
+  "tasks_completed": false,
+  "message": null
+}}
+[You get: "Code executed successfully"]
+{{
+  "tools": null,
+  "code": null,
+  "tasks_completed": true,
   "message": "Done! Made name column lowercase."
-}
+}}
 
-CRITICAL: STICK TO THE ORIGINAL REQUEST ONLY! No print statements unless debugging errors. message must be null until ALL tasks are complete!
+CRITICAL: Use tools to understand data structure and debug errors. Execute one transformation at a time. message must be null until ALL tasks are complete!
 """
 
 code_executor = CodeExecutorService()
@@ -173,6 +165,58 @@ def log_final_conversation_summary(ollama_conversation: Optional[List[Dict[str, 
 
 
 
+def get_column_info(df_state: DataFrameStateService) -> str:
+    if not df_state.has_dataframe():
+        return "No dataframe available"
+    
+    df = df_state.get_dataframe()
+    info = []
+    for col in df.columns:
+        info.append(f"{col}: {df[col].dtype}")
+    return "Columns and types:\n" + "\n".join(info)
+
+def get_sample_data(df_state: DataFrameStateService, columns: list) -> str:
+    if not df_state.has_dataframe():
+        return "No dataframe available"
+    
+    df = df_state.get_dataframe()
+    result = []
+    for col in columns:
+        if col in df.columns:
+            sample_values = df[col].head(5).tolist()
+            result.append(f"{col}: {sample_values}")
+        else:
+            result.append(f"{col}: Column not found")
+    return "Sample data:\n" + "\n".join(result)
+
+def get_dataframe_shape(df_state: DataFrameStateService) -> str:
+    if not df_state.has_dataframe():
+        return "No dataframe available"
+    
+    df = df_state.get_dataframe()
+    return f"Shape: {df.shape}, Columns: {len(df.columns)}, Rows: {len(df)}"
+
+
+def execute_tools(tools: list, df_state: DataFrameStateService) -> str:
+    results = []
+    for tool_call in tools:
+        tool_name = tool_call.get("tool")
+        params = tool_call.get("params", {})
+        
+        if tool_name == "get_column_info":
+            result = get_column_info(df_state)
+        elif tool_name == "get_sample_data":
+            columns = params.get("columns", [])
+            result = get_sample_data(df_state, columns)
+        elif tool_name == "get_dataframe_shape":
+            result = get_dataframe_shape(df_state)
+        else:
+            result = f"Unknown tool: {tool_name}"
+        
+        results.append(result)
+    
+    return "\n\n".join(results)
+
 def extract_json_response(response: str) -> Optional[Dict[str, Any]]:
     """Extract JSON response from LLM output"""
     import json
@@ -238,40 +282,32 @@ def chat(message: str, conversation_history: List[Dict], df_state: DataFrameStat
 
     max_turns = 5
     turn_count = 0
-    current_message = message  # Track the current message to send
+    current_message = message
     
-    # Initialize Ollama conversation history
     ollama_conversation = []
-    
-    # We'll write the final conversation summary at the end, not during the process
+    gemini_chat = None  # Will be initialized if using Gemini
 
     while turn_count < max_turns:
         print(f"\n====================")
 
-        # Ollama: Build full conversation history
         if turn_count == 0:
             df_info = f"""
-DATAFRAME INFO:
-Columns: {df_state.get_dataframe().columns.tolist()}
-Shape: {df_state.get_dataframe().shape}
-Data Types: {df_state.get_dataframe().dtypes.to_dict()}
-Sample Data:
-{df_state.get_dataframe().head().to_string()}
-"""
-            # Initialize conversation with system + user message
+        DATAFRAME INFO:
+        Columns: {df_state.get_dataframe().columns.tolist()}
+        Shape: {df_state.get_dataframe().shape}
+        Data Types: {df_state.get_dataframe().dtypes.to_dict()}
+        Sample Data:
+        {df_state.get_dataframe().head().to_string()}
+        """
             ollama_conversation = [
                 {"role": "system", "content": f"{SYSTEM_INSTRUCTIONS}\n{df_info}"},
                 {"role": "user", "content": current_message}
             ]
         else:
-            # Add new user message to conversation
             ollama_conversation.append({"role": "user", "content": current_message})
         
-        # Convert conversation to Ollama prompt format
+        # OLLAMA API CALL
         prompt = format_ollama_conversation(ollama_conversation)
-
-
-        # Ollama API call with full conversation history
         response = requests.post(
             OLLAMA_URL,
             json={
@@ -283,15 +319,12 @@ Sample Data:
         ).json()
         llm_response = response.get("response", "")
         
-        # Increment turn count only when LLM responds
         turn_count += 1
         print(f"\n========== LLM TURN {turn_count} ==========")
         
-        # Add assistant response to Ollama conversation history
         ollama_conversation.append({"role": "assistant", "content": llm_response})
         print(f"LLM Response: {llm_response}")
 
-        # Parse JSON response
         json_response = extract_json_response(llm_response)
         if not json_response:
             conversation_history.append(
@@ -304,12 +337,10 @@ Sample Data:
             current_message = "Please respond with valid JSON format as specified."
             continue
 
-        # Check if all tasks are completed
         if json_response.get("tasks_completed", False):
             final_message = json_response.get("message", "Task completed")
             print(f"All tasks completed: {final_message}")
             
-            # Log final conversation summary
             log_final_conversation_summary(ollama_conversation)
             
             return {
@@ -318,8 +349,24 @@ Sample Data:
                 "raw_response": llm_response,
             }
 
-        # Extract code from JSON
+        tools = json_response.get("tools")
         code = json_response.get("code")
+        
+        if tools:
+            print(f"Executing tools: {tools}")
+            tool_results = execute_tools(tools, df_state)
+            print(f"Tool results: {tool_results}")
+            conversation_history.append(
+                {
+                    "role": "assistant",
+                    "content": llm_response,
+                    "tools": tools,
+                    "tool_results": tool_results,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
+            current_message = f"Tool results:\n{tool_results}"
+            continue
         
         if not code:
             conversation_history.append(
@@ -329,7 +376,7 @@ Sample Data:
                     "timestamp": datetime.now().isoformat(),
                 }
             )
-            current_message = "Please provide code in the JSON response."
+            current_message = "Please provide code or tools in the JSON response."
             continue
 
         print(f"Executing code:\n{code}")
@@ -364,6 +411,147 @@ Sample Data:
     
     # Log final conversation summary
     log_final_conversation_summary(ollama_conversation)
+    
+    return {
+        "message": "Task execution stopped - maximum turns reached.",
+        "has_code": False,
+        "raw_response": "Max turns reached",
+    }
+
+def chat_gemini(message: str, conversation_history: List[Dict], df_state: DataFrameStateService) -> Dict[str, Any]:
+    """Chat function using Gemini model"""
+    if not df_state.has_dataframe():
+        return {
+            "message": "No dataframe available. Please upload a file first.",
+            "has_code": False,
+        }
+
+    from .gemini_chat_service import GeminiChatService
+    
+    max_turns = 5
+    turn_count = 0
+    current_message = message
+    
+    gemini_chat = None
+    gemini_conversation = []
+
+    while turn_count < max_turns:
+        print(f"\n====================")
+
+        if turn_count == 0:
+            df_info = f"""
+        DATAFRAME INFO:
+        Columns: {df_state.get_dataframe().columns.tolist()}
+        Shape: {df_state.get_dataframe().shape}
+        Data Types: {df_state.get_dataframe().dtypes.to_dict()}
+        Sample Data:
+        {df_state.get_dataframe().head().to_string()}
+        """
+            gemini_chat = GeminiChatService()
+            system_instruction = SYSTEM_INSTRUCTIONS + f"\n{df_info}"
+            gemini_chat.set_system_instruction(system_instruction)
+            llm_response = gemini_chat.send_message(current_message)
+            
+            gemini_conversation = [
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": current_message}
+            ]
+        else:
+            llm_response = gemini_chat.send_message(current_message)
+            gemini_conversation.append({"role": "user", "content": current_message})
+        
+        turn_count += 1
+        print(f"\n========== LLM TURN {turn_count} ==========")
+        
+        gemini_conversation.append({"role": "assistant", "content": llm_response})
+        print(f"LLM Response: {llm_response}")
+
+        json_response = extract_json_response(llm_response)
+        if not json_response:
+            conversation_history.append(
+                {
+                    "role": "assistant",
+                    "content": llm_response,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
+            current_message = "Please respond with valid JSON format as specified."
+            continue
+
+        if json_response.get("tasks_completed", False):
+            final_message = json_response.get("message", "Task completed")
+            print(f"All tasks completed: {final_message}")
+            
+            log_final_conversation_summary(gemini_conversation)
+            
+            return {
+                "message": final_message,
+                "has_code": True,
+                "raw_response": llm_response,
+            }
+
+        tools = json_response.get("tools")
+        code = json_response.get("code")
+        
+        if tools:
+            print(f"Executing tools: {tools}")
+            tool_results = execute_tools(tools, df_state)
+            print(f"Tool results: {tool_results}")
+            conversation_history.append(
+                {
+                    "role": "assistant",
+                    "content": llm_response,
+                    "tools": tools,
+                    "tool_results": tool_results,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
+            current_message = f"Tool results:\n{tool_results}"
+            continue
+        
+        if not code:
+            conversation_history.append(
+                {
+                    "role": "assistant",
+                    "content": llm_response,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
+            current_message = "Please provide code or tools in the JSON response."
+            continue
+
+        print(f"Executing code:\n{code}")
+        success, output = execute_code(code, df_state)
+
+        if success:
+            print(f"Success: {output}")
+            conversation_history.append(
+                {
+                    "role": "assistant",
+                    "content": llm_response,
+                    "code": code,
+                    "output": output,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
+            current_message = f"Code executed successfully. Output:\n{output}"
+        else:
+            print(f"Failed: {output}")
+            conversation_history.append(
+                {
+                    "role": "assistant",
+                    "content": llm_response,
+                    "code": code,
+                    "error": output,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
+            current_message = f"Code failed with error:\n{output}\n\nFix it and try again."
+
+    print(f"Max turns ({max_turns}) reached")
+    
+    # Log final conversation summary
+    log_final_conversation_summary(gemini_conversation)
     
     return {
         "message": "Task execution stopped - maximum turns reached.",

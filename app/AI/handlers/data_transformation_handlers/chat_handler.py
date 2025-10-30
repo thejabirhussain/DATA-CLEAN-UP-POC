@@ -1,9 +1,12 @@
 import pandas as pd
-from flask import request, jsonify
+from pydantic import BaseModel
 from datetime import datetime
 from services.data_transformation_services import chat_service
 from services.data_transformation_services.dataframe_state_service import DataFrameStateService
 from typing import List, Dict
+
+class ChatRequest(BaseModel):
+    message: str
 
 class ChatHandler:
     def __init__(self, df_state: DataFrameStateService, conversation_history: List[Dict]):
@@ -15,20 +18,14 @@ class ChatHandler:
         df_clean = df_clean.where(pd.notnull(df_clean), None)
         return df_clean.to_dict(orient)
     
-
-    
-    def handle_gemini_chat(self):
-        data = request.get_json()
-        if not data or 'message' not in data:
-            return jsonify({"error": "No message provided"}), 400
-        
+    def handle_gemini_chat(self, request: ChatRequest):
         # Store DataFrame state before processing
         pre_df = self.df_state.get_dataframe().copy() if self.df_state.has_dataframe() else None
 
         # Use Gemini chat service
         from services.data_transformation_services.gemini_chat_service import GeminiChatService
         gemini_service = GeminiChatService()
-        response = gemini_service.chat(data['message'], self.df_state)
+        response = gemini_service.chat(request.message, self.df_state)
         
         # Check if DataFrame was updated
         dataframe_updated = False
@@ -51,19 +48,15 @@ class ChatHandler:
                 'updated_total_rows': len(self.df_state.get_dataframe()),
             })
         
-        return jsonify(chat_response)  
+        return chat_response
 
-    def handle_ollama_chat(self):
-        data = request.get_json()
-        if not data or 'message' not in data:
-            return jsonify({"error": "No message provided"}), 400
-        
+    def handle_ollama_chat(self, request: ChatRequest):
         # Store DataFrame state before processing
         pre_df = self.df_state.get_dataframe().copy() if self.df_state.has_dataframe() else None
         
         # Use Ollama chat service
         from services.data_transformation_services.chat_service import chat
-        response = chat(data['message'], [], self.df_state)
+        response = chat(request.message, [], self.df_state)
         
         # Check if DataFrame was updated
         dataframe_updated = False
@@ -86,12 +79,12 @@ class ChatHandler:
                 'updated_total_rows': len(self.df_state.get_dataframe()),
             })
         
-        return jsonify(chat_response)
+        return chat_response
     
-    def handle_chat(self):
+    def handle_chat(self, request: ChatRequest):
         model_type = "ollama"  # "gemini" or "ollama"
         
         if model_type.lower() == "gemini":
-            return self.handle_gemini_chat()
+            return self.handle_gemini_chat(request)
         else:
-            return self.handle_ollama_chat()
+            return self.handle_ollama_chat(request)

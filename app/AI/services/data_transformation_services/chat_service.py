@@ -7,7 +7,9 @@ from .code_executor_service import CodeExecutorService
 from .dataframe_state_service import DataFrameStateService
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "llama3.1:8b"
+OLLAMA_MODEL = "qwen3-coder:30b"
+#llama3.1:8b
+#qwen3-coder:30b
 
 AVAILABLE_TOOLS = """AVAILABLE TOOLS:
 1. get_column_info() - Returns column names with dtypes
@@ -207,7 +209,7 @@ def chat(message: str, conversation_history: List[Dict], df_state: DataFrameStat
             "has_code": False,
         }
 
-    max_turns = 5
+    max_turns = 10
     turn_count = 0
     current_message = message
     

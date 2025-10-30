@@ -313,7 +313,7 @@ export default function Prep(){
 
     async function loadDataPage(targetPage){
       try{
-        const resp = await fetch(`${API_BASE}/data?page=${targetPage}&rows_per_page=${PAGE_SIZE}`)
+        const resp = await fetch(`${API_BASE}/data/?page=${targetPage}&rows_per_page=${PAGE_SIZE}`)
         const result = await resp.json()
         if (resp.ok){ 
           CURRENT_PAGE = targetPage; 
@@ -336,7 +336,7 @@ export default function Prep(){
       try{
         const body = { instruction: text }
         if (sessionId) body.session_id = sessionId
-        const resp = await fetch(`${API_BASE}/transform`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body) })
+        const resp = await fetch(`${API_BASE}/data/transform`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body) })
         const result = await resp.json()
         if (result.success){
           sessionId = result.session_id || null
@@ -434,7 +434,7 @@ export default function Prep(){
       const formData = new FormData()
       formData.append('file', f)
       try{
-        const resp = await fetch(`${API_BASE}/upload`, { method: 'POST', body: formData })
+        const resp = await fetch(`${API_BASE}/data/upload`, { method: 'POST', body: formData })
         const result = await resp.json()
         if (resp.ok){ displayData(result.preview, result.columns, result.total_rows); HISTORY = []; FUTURE = []; BACKEND_UNDO = result.undo_count||0; BACKEND_REDO = result.redo_count||0; updateHistoryInfo(); startLivePolling() }
       } catch(e){ console.warn('Upload failed', e) }
@@ -549,7 +549,7 @@ export default function Prep(){
       
       try{
         // Send message via HTTP
-        const resp = await fetch(`${API_BASE}/chat`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ message, model: selectedLLM }) })
+        const resp = await fetch(`${API_BASE}/data/chat`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ message, model: selectedLLM }) })
         const result = await resp.json()
         if (result.success){
           addChatMessage('assistant', result.message)
@@ -651,7 +651,7 @@ export default function Prep(){
       if (!pollController.running) return
       if (document.hidden){ pollScheduleNext(); return }
       try{
-        const resp = await fetch(`${API_BASE}/data?page=${CURRENT_PAGE}&rows_per_page=${PAGE_SIZE}`, { cache: 'no-store' })
+        const resp = await fetch(`${API_BASE}/data/?page=${CURRENT_PAGE}&rows_per_page=${PAGE_SIZE}`, { cache: 'no-store' })
         if (resp.ok){
           const result = await resp.json()
           let changed = false

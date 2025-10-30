@@ -1,8 +1,12 @@
 import pandas as pd
-from flask import request, jsonify
+from fastapi import HTTPException
+from pydantic import BaseModel
 from services.data_transformation_services.transform_service import TransformService
 from services.data_transformation_services.code_executor_service import CodeExecutorService
 from services.data_transformation_services.dataframe_state_service import DataFrameStateService
+
+class TransformRequest(BaseModel):
+    instruction: str
 
 class TransformHandler:
     def __init__(self, df_state: DataFrameStateService, coder_agent: TransformService, code_executor: CodeExecutorService):
@@ -15,14 +19,10 @@ class TransformHandler:
         df_clean = df_clean.where(pd.notnull(df_clean), None)
         return df_clean.to_dict(orient)
     
-    def handle_transform(self):
-        data = request.get_json()
-        if not data or 'instruction' not in data:
-            return jsonify({"error": "No instruction provided"}), 400
-        
+    def handle_transform(self, request: TransformRequest):
         try:
             generated_code = self.coder_agent.process_instruction(
-                data['instruction'], 
+                request.instruction, 
                 self.df_state.get_dataframe(),
                 "ollama"
             )
@@ -33,16 +33,16 @@ class TransformHandler:
             )
             
             if error_msg:
-                return jsonify({
+                return {
                     "success": False,
                     "error": error_msg,
                     "generated_code": generated_code
-                })
+                }
             
             self.df_state.update_dataframe(result_df)
             self.df_state.get_dataframe().to_csv('storage/data.csv', index=False)
             
-            return jsonify({
+            return {
                 "success": True,
                 "type": "transformation",
                 "generated_code": generated_code,
@@ -51,9 +51,9 @@ class TransformHandler:
                 "result_columns": list(self.df_state.get_dataframe().columns),
                 "preview": self.safe_to_dict(self.df_state.get_dataframe().head(100)),
                 "total_rows": len(self.df_state.get_dataframe()),
-            })
+            }
         except Exception as e:
-            return jsonify({
+            return {
                 "error": str(e),
                 "generated_code": generated_code if 'generated_code' in locals() else None
-            })
+            }

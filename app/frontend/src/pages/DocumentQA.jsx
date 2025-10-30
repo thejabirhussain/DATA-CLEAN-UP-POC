@@ -76,7 +76,13 @@ export default function DocumentQA() {
         setMessages([])
         alert(`${files.length} document(s) uploaded and processed successfully!`)
       } else {
-        alert('Upload failed: ' + (data.detail || 'Unknown error'))
+        const errorMsg = data.detail || data.message || 'Unknown error'
+        const failedFiles = data.failed_files || []
+        let fullErrorMsg = 'Upload failed: ' + errorMsg
+        if (failedFiles.length > 0) {
+          fullErrorMsg += '\n\nFailed files:\n' + failedFiles.map(f => `• ${f.filename}: ${f.error}`).join('\n')
+        }
+        alert(fullErrorMsg)
       }
     } catch (e) {
       alert('Upload error: ' + e.message)

@@ -1,5 +1,5 @@
 import pandas as pd
-from flask import request, jsonify
+from fastapi import HTTPException
 from services.data_transformation_services.dataframe_state_service import DataFrameStateService
 
 class DataHandler:
@@ -11,12 +11,9 @@ class DataHandler:
         df_clean = df_clean.where(pd.notnull(df_clean), None)
         return df_clean.to_dict(orient)
     
-    def handle_data_retrieval(self):
-        page = int(request.args.get('page', 1))
-        rows_per_page = int(request.args.get('rows_per_page', 10))
-        
+    def handle_data_retrieval(self, page: int = 1, rows_per_page: int = 10):
         if not self.df_state.has_dataframe():
-            return jsonify({"error": "No data available"}), 400
+            raise HTTPException(status_code=400, detail="No data available")
 
         current_df = self.df_state.get_dataframe()
         total_rows = len(current_df)
@@ -24,13 +21,13 @@ class DataHandler:
         if total_pages == 0:
             total_pages = 1
         if page < 1 or page > total_pages:
-            return jsonify({"error": f"Invalid page number. Must be between 1 and {total_pages}"}), 400
+            raise HTTPException(status_code=400, detail=f"Invalid page number. Must be between 1 and {total_pages}")
 
         start_idx = (page - 1) * rows_per_page
         end_idx = min(start_idx + rows_per_page, total_rows)
         page_data = current_df.iloc[start_idx:end_idx]
 
-        return jsonify({
+        return {
             "data": self.safe_to_dict(page_data),
             "columns": list(current_df.columns),
             "current_page": page,
@@ -39,4 +36,4 @@ class DataHandler:
             "rows_per_page": rows_per_page,
             "start_row": start_idx + 1,
             "end_row": end_idx,
-        })
+        }

@@ -1,6 +1,6 @@
 import io
 import pandas as pd
-from flask import request, jsonify
+from fastapi import UploadFile, File, HTTPException
 from services.data_transformation_services.dataframe_state_service import DataFrameStateService
 
 class UploadHandler:
@@ -12,19 +12,15 @@ class UploadHandler:
         df_clean = df_clean.where(pd.notnull(df_clean), None)
         return df_clean.to_dict(orient)
     
-    def handle_upload(self):
-        if 'file' not in request.files:
-            return jsonify({"error": "No file provided"}), 400
-        
-        file = request.files['file']
-        if file.filename == '':
-            return jsonify({"error": "No file selected"}), 400
+    async def handle_upload(self, file: UploadFile = File(...)):
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No file selected")
         
         if not file.filename.endswith(('.xlsx', '.xls', '.csv')):
-            return jsonify({"error": "Only Excel and CSV files are supported"}), 400
+            raise HTTPException(status_code=400, detail="Only Excel and CSV files are supported")
         
         try:
-            contents = file.read()
+            contents = await file.read()
             
             if file.filename.endswith('.csv'):
                 uploaded_df = pd.read_csv(io.StringIO(contents.decode('utf-8')))
@@ -34,13 +30,13 @@ class UploadHandler:
             self.df_state.set_dataframe(uploaded_df)
             self.df_state.get_dataframe().to_csv('storage/data.csv', index=False)
             
-            return jsonify({
+            return {
                 "message": "File uploaded successfully",
                 "filename": file.filename,
                 "shape": self.df_state.get_dataframe().shape,
                 "columns": list(self.df_state.get_dataframe().columns),
                 "preview": self.safe_to_dict(self.df_state.get_dataframe().head(100)),
                 "total_rows": len(self.df_state.get_dataframe()),
-            })
+            }
         except Exception as e:
-            return jsonify({"error": f"Error processing file: {str(e)}"}), 400
+            raise HTTPException(status_code=400, detail=f"Error processing file: {str(e)}")

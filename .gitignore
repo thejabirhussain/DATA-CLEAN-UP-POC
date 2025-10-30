@@ -56,6 +56,8 @@ Thumbs.db
 
 # RAG System
 app/AI/uploads/
+app/AI/storage/uploads/
+app/AI/storage/uploads/pdfs/
 chroma_db_*/
 *_tables.json
 data.csv

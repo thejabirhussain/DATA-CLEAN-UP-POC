@@ -12,7 +12,12 @@ import chromadb
 from chromadb.utils import embedding_functions
 import requests
 import warnings
-from werkzeug.utils import secure_filename
+
+def secure_filename(filename: str) -> str:
+    """Secure a filename by removing unsafe characters"""
+    filename = re.sub(r'[^\w\s.-]', '', filename)
+    filename = re.sub(r'[-\s]+', '-', filename)
+    return filename.strip('-')
 
 warnings.filterwarnings('ignore')
 os.environ['GRPC_VERBOSITY'] = 'ERROR'

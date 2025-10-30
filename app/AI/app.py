@@ -1,33 +1,32 @@
 import pytesseract
-from flask import Flask, jsonify
-from flask_cors import CORS
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 
-from controllers.data_transformation_controller import data_bp
-from controllers.rag_controller import rag_bp
+from controllers.data_transformation_controller import data_router
+from controllers.rag_controller import rag_router
 
 import logging
 import os
 
 pytesseract.pytesseract.tesseract_cmd = r"C:\dev\tesseract\tesseract.exe"
 
-app = Flask(__name__)
-CORS(app)
+app = FastAPI(title="AI Backend API", version="1.0.0")
 
-app.register_blueprint(data_bp)
-app.register_blueprint(rag_bp)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.route("/health", methods=["GET"])
-def health_check():
-    return jsonify({
-        "status": "ok",
-        "service": "AI Backend API",
-        "timestamp": datetime.now().isoformat()
-    })
+app.include_router(data_router)
+app.include_router(rag_router)
+
 
 if __name__ == "__main__":
-    log = logging.getLogger('werkzeug')
-    log.setLevel(logging.ERROR)
+    import uvicorn
     
     print("AI Backend API Started on http://localhost:8000")
-    app.run(host="0.0.0.0", port=8000, debug=False)
+    uvicorn.run(app, host="0.0.0.0", port=8000)

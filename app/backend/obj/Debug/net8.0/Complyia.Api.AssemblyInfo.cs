@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Complyia.Api")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a81a3b085405486428fe3b0ef8127a2dc4756215")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+cae8a149b5bede677b71ee4e8e04c252e7891b8f")]
 [assembly: System.Reflection.AssemblyProductAttribute("Complyia.Api")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Complyia.Api")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

@@ -59,3 +59,27 @@ app/AI/uploads/
 chroma_db_*/
 *_tables.json
 data.csv
+app/backend/bin/
+app/backend/bin/*
+app/backend/obj/Debug/
+app/backend/obj/Debug/*
+Debug/*
+
+*/Debug/*
+
+# .NET build outputs
+**/bin/
+**/obj/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Logs
+*.log
+
+# Node/Vite
+node_modules/
+dist/
+

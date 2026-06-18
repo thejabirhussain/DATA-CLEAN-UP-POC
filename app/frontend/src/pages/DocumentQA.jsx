@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 
-const API_BASE = 'http://localhost:8000'
+const API_BASE = 'http://localhost:800'
 
 export default function DocumentQA() {
   const [file, setFile] = useState(null)

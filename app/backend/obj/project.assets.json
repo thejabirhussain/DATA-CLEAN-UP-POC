@@ -8,23 +8,23 @@
     "net8.0": []
   },
   "packageFolders": {
-    "C:\\Users\\theja\\.nuget\\packages\\": {},
-    "D:\\Visual Studio Setup\\Visual Studio Shared Components\\NuGetPackages": {}
+    "C:\\Users\\Maryum Urooj Ahmed\\.nuget\\packages\\": {},
+    "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "D:\\22691A05C9\\data-clean-up\\app\\backend\\Complyia.Api.csproj",
+      "projectUniqueName": "C:\\Users\\Maryum Urooj Ahmed\\Desktop\\DATA-CLEAN-UP-POC\\app\\backend\\Complyia.Api.csproj",
       "projectName": "Complyia.Api",
-      "projectPath": "D:\\22691A05C9\\data-clean-up\\app\\backend\\Complyia.Api.csproj",
-      "packagesPath": "C:\\Users\\theja\\.nuget\\packages\\",
-      "outputPath": "D:\\22691A05C9\\data-clean-up\\app\\backend\\obj\\",
+      "projectPath": "C:\\Users\\Maryum Urooj Ahmed\\Desktop\\DATA-CLEAN-UP-POC\\app\\backend\\Complyia.Api.csproj",
+      "packagesPath": "C:\\Users\\Maryum Urooj Ahmed\\.nuget\\packages\\",
+      "outputPath": "C:\\Users\\Maryum Urooj Ahmed\\Desktop\\DATA-CLEAN-UP-POC\\app\\backend\\obj\\",
       "projectStyle": "PackageReference",
       "fallbackFolders": [
-        "D:\\Visual Studio Setup\\Visual Studio Shared Components\\NuGetPackages"
+        "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
       ],
       "configFilePaths": [
-        "C:\\Users\\theja\\AppData\\Roaming\\NuGet\\NuGet.Config",
+        "C:\\Users\\Maryum Urooj Ahmed\\AppData\\Roaming\\NuGet\\NuGet.Config",
         "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
         "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
       ],
@@ -33,6 +33,7 @@
       ],
       "sources": {
         "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+        "C:\\Program Files\\dotnet\\library-packs": {},
         "https://api.nuget.org/v3/index.json": {}
       },
       "frameworks": {
